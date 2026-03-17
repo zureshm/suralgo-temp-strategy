@@ -3,6 +3,8 @@ const http = require("http");
 const { evaluateEMACross } = require("./strategy/emaCrossStrategy");
 
 const app = express();
+const cors = require("cors");
+app.use(cors());
 app.use(express.json());
 
 const PORT = 4000;
