@@ -1,6 +1,6 @@
 const express = require("express");
 const http = require("http");
-const { evaluateEMACross } = require("./strategy/emaCrossStrategy");
+const { evaluateEMACross } = require("./strategy/newStrategy");
 
 const app = express();
 app.use(express.json());

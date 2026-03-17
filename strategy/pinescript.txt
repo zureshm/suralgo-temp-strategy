@@ -1,0 +1,215 @@
+//@version=6
+strategy("SUR_BUY_SELL_NOW", overlay=true, process_orders_on_close=true, default_qty_type=strategy.fixed, default_qty_value=1)
+
+// -----------------------------------------------------------------------------
+// Core Strategy
+// -----------------------------------------------------------------------------
+
+// MACD
+fastLength   = 6
+slowLength   = 26
+signalLength = 9
+[macdLine, signalLine, _] = ta.macd(close, fastLength, slowLength, signalLength)
+macdHist = macdLine - signalLine
+macdHistStrong = math.abs(macdHist) > 0.3
+
+// EMA
+ema8  = ta.ema(close, 8)
+ema16 = ta.ema(close, 16)
+
+plot(ema8, title="EMA 8", color=color.blue)
+plot(ema16, title="EMA 16", color=color.red)
+
+// ATR Sideways
+atrLength = 14
+atrValue = ta.atr(atrLength)
+priceRange = ta.highest(high, atrLength) - ta.lowest(low, atrLength)
+sidewaysMarket = priceRange < atrValue * 2.5
+
+// VWAP
+vwapValue = ta.vwap
+plot(vwapValue, title="VWAP", color=color.black)
+
+// Persistent flags
+var bool emaCrossFlag = false
+var bool inBuyZone = false
+var bool inSellZone = false
+var bool wasSideways = false
+var bool mainBuyCycleActive = false
+var bool mainSellCycleActive = false
+
+// ENTRY STATE FLAGS
+var bool inPosition = false
+var bool waitForIn = false
+var bool waitForIsBuyAfterIn = false
+
+var bool inSellPosition = false
+var bool waitForOut = false
+var bool waitForIsSellAfterOut = false
+
+// pending windows
+var int pendingBuyWindow = 0
+var int pendingSellWindow = 0
+
+if strategy.position_size == 0 and ta.crossover(ema8, ema16)
+    emaCrossFlag := true
+
+buyCondition = emaCrossFlag and (macdLine > 0 and signalLine > 0) and not sidewaysMarket
+sellCondition = ta.crossunder(ema8, ema16) and not sidewaysMarket
+
+sidewaysEnded = wasSideways and not sidewaysMarket
+wasSideways := sidewaysMarket
+
+if sidewaysEnded
+    if macdLine > 0 and signalLine > 0 and ema8 > ema16
+        inBuyZone := true
+        inSellZone := false
+    else if ema8 < ema16
+        inBuyZone := false
+        inSellZone := true
+
+if buyCondition
+    inBuyZone := true
+    inSellZone := false
+
+if sellCondition
+    inBuyZone := false
+    inSellZone := true
+
+if sidewaysMarket
+    inBuyZone := false
+    inSellZone := false
+
+// BUY LABEL
+if buyCondition
+    label.new(bar_index, low, "BUY", style=label.style_label_up, color=color.blue, textcolor=color.white, size=size.small)
+    emaCrossFlag := false
+    mainBuyCycleActive := true
+    mainSellCycleActive := false
+    inPosition := false
+    waitForIn := false
+    waitForIsBuyAfterIn := false
+    pendingBuyWindow := 0
+
+// SELL LABEL
+if sellCondition
+    label.new(bar_index, high , "SELL", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+    mainBuyCycleActive := false
+    mainSellCycleActive := true
+    inSellPosition := false
+    waitForOut := false
+    waitForIsSellAfterOut := false
+    pendingSellWindow := 0
+
+// -----------------------------------------------------------------------------
+// UT Bot Logic
+// -----------------------------------------------------------------------------
+
+utKeyValue = 2
+utAtrPeriod = 1
+utAtr = ta.atr(utAtrPeriod)
+
+var float trailStop = na
+var int trendDir = 0
+
+if na(trailStop)
+    trailStop := close - utKeyValue * utAtr
+
+if close > trailStop
+    trailStop := math.max(trailStop, close - utKeyValue * utAtr)
+    trendDir := 1
+
+if close < trailStop
+    trailStop := math.min(trailStop, close + utKeyValue * utAtr)
+    trendDir := -1
+
+Mix_longCondition = ta.crossover(close, trailStop)
+Mix_shortCondition = ta.crossunder(close, trailStop)
+
+// if Mix_longCondition
+//     label.new(bar_index, low - 10, "IN", style=label.style_label_up, color=color.white, textcolor=color.white, size=size.small)
+
+// if Mix_shortCondition
+//     label.new(bar_index, high + 10, "OUT", style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.small)
+
+// -----------------------------------------------------------------------------
+// Stochastic + Composite Signal
+// -----------------------------------------------------------------------------
+
+kLength = 14
+dLength = 3
+smoothK = 3
+k = ta.sma(ta.stoch(close, high, low, kLength), smoothK)
+d = ta.sma(k, dLength)
+
+lookback = 3
+highestHigh = ta.highest(high, lookback)
+lowestLow = ta.lowest(low, lookback)
+rangeMid = (highestHigh + lowestLow) / 2
+
+isBullishPA = close > rangeMid and close > close[lookback]
+isBearishPA = close < rangeMid and close < close[lookback]
+
+isBuy = macdLine > signalLine and macdHistStrong and ema8 > ema16 and k > d and trendDir == 1 and isBullishPA
+isSell = macdLine < signalLine and macdHistStrong and ema8 < ema16 and k < d and trendDir == -1 and isBearishPA
+
+// -----------------------------------------------------------------------------
+// BUY NOW LOGIC
+// -----------------------------------------------------------------------------
+
+greenCandle = close > open
+
+if mainBuyCycleActive and not inPosition and not waitForIn and not waitForIsBuyAfterIn and isBuy
+    pendingBuyWindow := 5
+
+if mainBuyCycleActive and waitForIsBuyAfterIn and isBuy
+    pendingBuyWindow := 5
+    waitForIsBuyAfterIn := false
+
+if pendingBuyWindow > 0
+    if greenCandle
+        label.new(bar_index, low - 6, "BUY NOW", style=label.style_label_up, color=color.lime, textcolor=color.black, size=size.small)
+        inPosition := true
+        pendingBuyWindow := 0
+    else
+        pendingBuyWindow -= 1
+
+if mainBuyCycleActive and inPosition and Mix_shortCondition
+    inPosition := false
+    waitForIn := true
+    pendingBuyWindow := 0
+
+if mainBuyCycleActive and waitForIn and Mix_longCondition
+    waitForIn := false
+    waitForIsBuyAfterIn := true
+
+// -----------------------------------------------------------------------------
+// SELL NOW LOGIC  (REVERSED STRUCTURE)
+// -----------------------------------------------------------------------------
+
+redCandle = close < open
+
+if mainSellCycleActive and not inSellPosition and not waitForOut and not waitForIsSellAfterOut and isSell
+    pendingSellWindow := 5
+
+if mainSellCycleActive and waitForIsSellAfterOut and isSell
+    pendingSellWindow := 5
+    waitForIsSellAfterOut := false
+
+if pendingSellWindow > 0
+    if redCandle
+        label.new(bar_index, high + 6, "SELL NOW", style=label.style_label_down, color=color.yellow, textcolor=color.black, size=size.small)
+        inSellPosition := true
+        pendingSellWindow := 0
+    else
+        pendingSellWindow -= 1
+
+// reverse re-entry logic
+if mainSellCycleActive and inSellPosition and Mix_longCondition
+    inSellPosition := false
+    waitForOut := true
+    pendingSellWindow := 0
+
+if mainSellCycleActive and waitForOut and Mix_shortCondition
+    waitForOut := false
+    waitForIsSellAfterOut := true
