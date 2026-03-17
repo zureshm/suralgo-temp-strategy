@@ -3,16 +3,20 @@ const http = require("http");
 const { evaluateEMACross } = require("./strategy/emaCrossStrategy");
 
 const app = express();
+app.use(express.json());
 const cors = require("cors");
 app.use(cors());
-app.use(express.json());
 
 const PORT = 4000;
 const MARKET_URL = "http://localhost:2000/current-candle";
 
+// hardcoded symbol used by frontend for matching
+const STRATEGY_SYMBOL = "NIFTY 10MAR26 24600 CE";
+
 let candleHistory = [];
 
 let latestEvaluation = {
+  symbol: STRATEGY_SYMBOL,
   signal: "WAIT",
   ema10: null,
   ema20: null,
@@ -52,6 +56,7 @@ async function pollMarketAndEvaluate() {
     if (!candle || candle.message) {
       latestEvaluation = {
         ...latestEvaluation,
+        symbol: STRATEGY_SYMBOL,
         engineStatus: "no-candle",
       };
       return;
@@ -62,6 +67,7 @@ async function pollMarketAndEvaluate() {
     if (lastSavedTime === candle.time) {
       latestEvaluation = {
         ...latestEvaluation,
+        symbol: STRATEGY_SYMBOL,
         engineStatus: "waiting-next-candle",
       };
       return;
@@ -72,6 +78,7 @@ async function pollMarketAndEvaluate() {
     const result = evaluateEMACross(candleHistory);
 
     latestEvaluation = {
+      symbol: STRATEGY_SYMBOL,
       ...result,
       candleCount: candleHistory.length,
       lastCandleTime: candle.time,
@@ -82,6 +89,7 @@ async function pollMarketAndEvaluate() {
   } catch (error) {
     latestEvaluation = {
       ...latestEvaluation,
+      symbol: STRATEGY_SYMBOL,
       engineStatus: "error",
       error: error.message,
     };
@@ -97,6 +105,7 @@ app.get("/", (req, res) => {
 app.get("/evaluate", (req, res) => {
   res.json({
     ...latestEvaluation,
+    symbol: STRATEGY_SYMBOL,
     candles: candleHistory.slice(-5),
   });
 });
@@ -104,13 +113,18 @@ app.get("/evaluate", (req, res) => {
 app.post("/evaluate", (req, res) => {
   const candles = req.body.candles || [];
   const result = evaluateEMACross(candles);
-  res.json(result);
+
+  res.json({
+    symbol: STRATEGY_SYMBOL,
+    ...result,
+  });
 });
 
 app.get("/reset-engine", (req, res) => {
   candleHistory = [];
 
   latestEvaluation = {
+    symbol: STRATEGY_SYMBOL,
     signal: "WAIT",
     ema10: null,
     ema20: null,
