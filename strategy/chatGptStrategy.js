@@ -50,7 +50,7 @@ function calculateATR(candles, period = 14) {
   return sum / period
 }
 
-function evaluateEMACross(candles) {
+function chatGptStrategy(candles) {
   if (!candles || candles.length < 30) {
     return {
       signal: "WAIT",
@@ -127,5 +127,5 @@ function evaluateEMACross(candles) {
 }
 
 module.exports = {
-  evaluateEMACross
+  chatGptStrategy
 }

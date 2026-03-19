@@ -1,6 +1,7 @@
 const express = require("express");
 const http = require("http");
-const { evaluateEMACross } = require("./strategy/chatGptStrategy");
+const { chatGptStrategy } = require("./strategy/chatGptStrategy");
+const { surStrategy } = require("./strategy/surStrategy");
 
 const app = express();
 app.use(express.json());
@@ -75,7 +76,7 @@ async function pollMarketAndEvaluate() {
 
     candleHistory.push(candle);
 
-    const result = evaluateEMACross(candleHistory);
+    const result = surStrategy(candleHistory);
 
     latestEvaluation = {
       symbol: STRATEGY_SYMBOL,

@@ -83,7 +83,7 @@ function xunder(pA, pB, nA, nB) { return pA != null && pB != null && nA != null 
 
 // ── Main strategy engine ────────────────────────────────────────────────────
 
-function evaluateEMACross(candles) {
+function surStrategy(candles) {
   if (!candles || candles.length < 60) {
     return { signal: "WAIT", ema10: null, ema20: null };
   }
@@ -230,4 +230,4 @@ function evaluateEMACross(candles) {
   };
 }
 
-module.exports = { evaluateEMACross };
+module.exports = { surStrategy };
