@@ -1,3 +1,4 @@
+require('dotenv').config({ path: '.env.local' });
 const express = require("express");
 const http = require("http");
 const { evaluateEMACross } = require("./strategy/evaluateEMACross");
@@ -10,7 +11,7 @@ const cors = require("cors");
 app.use(cors());
 
 const PORT = 4000;
-const MARKET_URL = "http://localhost:2000/current-candle";
+const MARKET_URL = `${process.env.BASE_URL}/current-candle`;
 
 // hardcoded symbol used by frontend for matching
 const STRATEGY_SYMBOL = "NIFTY 10MAR26 24600 CE";
