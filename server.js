@@ -1,7 +1,8 @@
 const express = require("express");
 const http = require("http");
+const { evaluateEMACross } = require("./strategy/evaluateEMACross");
+const {surStrategy} = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
-const { surStrategy } = require("./strategy/surStrategy");
 
 const app = express();
 app.use(express.json());
@@ -76,7 +77,9 @@ async function pollMarketAndEvaluate() {
 
     candleHistory.push(candle);
 
-    const result = surStrategy(candleHistory);
+    const result = chatGptStrategy(candleHistory);
+    // const result = surStrategy(candleHistory);
+    // const result = evaluateEMACross(candleHistory);
 
     latestEvaluation = {
       symbol: STRATEGY_SYMBOL,
@@ -111,15 +114,15 @@ app.get("/evaluate", (req, res) => {
   });
 });
 
-app.post("/evaluate", (req, res) => {
-  const candles = req.body.candles || [];
-  const result = evaluateEMACross(candles);
+// app.post("/evaluate", (req, res) => {
+//   const candles = req.body.candles || [];
+//   const result = evaluateEMACross(candles);
 
-  res.json({
-    symbol: STRATEGY_SYMBOL,
-    ...result,
-  });
-});
+//   res.json({
+//     symbol: STRATEGY_SYMBOL,
+//     ...result,
+//   });
+// });
 
 app.get("/reset-engine", (req, res) => {
   candleHistory = [];

@@ -15,40 +15,6 @@ function emaSeries(src, period) {
   return out;
 }
 
-function wmaSeries(src, period) {
-  const out = new Array(src.length).fill(null);
-  const denom = period * (period + 1) / 2;
-  for (let i = period - 1; i < src.length; i++) {
-    let s = 0;
-    for (let j = 0; j < period; j++) s += src[i - period + 1 + j] * (j + 1);
-    out[i] = s / denom;
-  }
-  return out;
-}
-
-function hmaSeries(src, period) {
-  const halfLen = Math.floor(period / 2);
-  const sqrtLen = Math.round(Math.sqrt(period));
-  const wmaHalf = wmaSeries(src, halfLen);
-  const wmaFull = wmaSeries(src, period);
-  const diff = src.map((_, i) =>
-    (wmaHalf[i] != null && wmaFull[i] != null) ? 2 * wmaHalf[i] - wmaFull[i] : null
-  );
-  const out = new Array(src.length).fill(null);
-  const denom = sqrtLen * (sqrtLen + 1) / 2;
-  for (let i = 0; i < src.length; i++) {
-    if (i < sqrtLen - 1) continue;
-    let valid = true, s = 0;
-    for (let j = 0; j < sqrtLen; j++) {
-      const val = diff[i - sqrtLen + 1 + j];
-      if (val == null) { valid = false; break; }
-      s += val * (j + 1);
-    }
-    if (valid) out[i] = s / denom;
-  }
-  return out;
-}
-
 function smaAt(arr, end, len) {
   if (end - len + 1 < 0) return null;
   let s = 0;
@@ -131,7 +97,6 @@ function surStrategy(candles) {
   // Pre-compute indicator series
   const ema8  = emaSeries(C, 8);
   const ema16 = emaSeries(C, 16);
-  const hma120 = hmaSeries(C, 120);
   const atr14 = atrSeries(H, L, C, 14);
   const atr1  = atrSeries(H, L, C, 1);
   const md    = macdAll(C, 6, 26, 9);
@@ -237,16 +202,15 @@ function surStrategy(candles) {
     if (mainBuyCycleActive && inPosition && mixShort) { inPosition = false; waitForIn = true; pendingBuyWindow = 0; }
     if (mainBuyCycleActive && waitForIn && mixLong) { waitForIn = false; waitForIsBuyAfterIn = true; }
 
-    // ── SELL NOW logic (EMA8 crosses below EMA16 or HMA120 — whichever first) ──
-    if (inPosition || waitForIn || waitForIsBuyAfterIn) {
-      const ema8XunderEma16  = xunder(ema8[i - 1], ema16[i - 1], ema8[i], ema16[i]);
-      const ema8XunderHma120 = xunder(ema8[i - 1], hma120[i - 1], ema8[i], hma120[i]);
-      if (ema8XunderEma16 || ema8XunderHma120) {
-        inPosition = false; waitForIn = false; waitForIsBuyAfterIn = false;
-        pendingBuyWindow = 0;
-        sig = "SELL"; trade = "EXIT"; reason = "Sell now exit";
-      }
+    // ── SELL NOW logic ──
+    if (mainSellCycleActive && !inSellPosition && !waitForOut && !waitForIsSellAfterOut && isSell) pendingSellWindow = 5;
+    if (mainSellCycleActive && waitForIsSellAfterOut && isSell) { pendingSellWindow = 5; waitForIsSellAfterOut = false; }
+    if (pendingSellWindow > 0) {
+      if (red) { inSellPosition = true; pendingSellWindow = 0; sig = "SELL"; trade = "EXIT"; reason = "Sell now exit"; }
+      else { pendingSellWindow -= 1; }
     }
+    if (mainSellCycleActive && inSellPosition && mixLong) { inSellPosition = false; waitForOut = true; pendingSellWindow = 0; }
+    if (mainSellCycleActive && waitForOut && mixShort) { waitForOut = false; waitForIsSellAfterOut = true; }
 
     // ── Bar log ──
     const snap = { barIndex: i, emaCrossFlag, mainBuyCycleActive, mainSellCycleActive,
@@ -262,8 +226,7 @@ function surStrategy(candles) {
   return {
     signal: lastSignal,
     ema10: ema8[N - 1],
-    ema20: ema16[N - 1],
-    hma120: hma120[N - 1]
+    ema20: ema16[N - 1]
   };
 }
 
