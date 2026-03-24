@@ -23,11 +23,11 @@ function evaluateEMACross(candles) {
 
   const prevCloses = closes.slice(0, closes.length - 1)
 
-  const ema10_prev = calculateEMA(10, prevCloses)
-  const ema20_prev = calculateEMA(20, prevCloses)
+  const ema10_prev = calculateEMA(8, prevCloses)
+  const ema20_prev = calculateEMA(16, prevCloses)
 
-  const ema10_now = calculateEMA(10, closes)
-  const ema20_now = calculateEMA(20, closes)
+  const ema10_now = calculateEMA(8, closes)
+  const ema20_now = calculateEMA(16, closes)
 
   if (ema10_prev <= ema20_prev && ema10_now > ema20_now) {
     return {
