@@ -234,23 +234,42 @@ app.get("/evaluate", (req, res) => {
 
 
 
-// app.post("/evaluate", (req, res) => {
+app.post("/evaluate", (req, res) => {
+  const candle = req.body.candle;
+  const symbol = req.body.symbol;
 
-//   const candles = req.body.candles || [];
+  if (!candle || !symbol) {
+    return res.status(400).json({
+      message: "symbol and candle are required",
+    });
+  }
 
-//   const result = evaluateEMACross(candles);
+  const lastSavedTime = candleHistory[candleHistory.length - 1]?.time;
 
+  if (lastSavedTime === candle.time) {
+    return res.json({
+      ...latestEvaluation,
+      symbol,
+      engineStatus: "duplicate-candle",
+    });
+  }
 
+  candleHistory.push(candle);
 
-//   res.json({
+  const result = evaluateEMACross(candleHistory);
 
-//     symbol: STRATEGY_SYMBOL,
+  latestEvaluation = {
+    symbol,
+    ...result,
+    candleCount: candleHistory.length,
+    lastCandleTime: candle.time,
+    engineStatus: "running",
+  };
 
-//     ...result,
+  console.log("Strategy result:", latestEvaluation);
 
-//   });
-
-// });
+  res.json(latestEvaluation);
+});
 
 
 
@@ -286,7 +305,7 @@ app.get("/reset-engine", (req, res) => {
 
 
 
-setInterval(pollMarketAndEvaluate, 1000);
+// setInterval(pollMarketAndEvaluate, 1000);
 
 
 
