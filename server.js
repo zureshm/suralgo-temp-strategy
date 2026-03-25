@@ -1,246 +1,89 @@
-
-
-require('dotenv').config();
+require("dotenv").config();
 
 const express = require("express");
-
-const http = require("http");
+const cors = require("cors");
 
 const { evaluateEMACross } = require("./strategy/evaluateEMACross");
-
-const {surStrategy} = require("./strategy/surStrategy");
-
+const { surStrategy } = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
-
-
 
 const app = express();
 
 app.use(express.json());
-
-const cors = require("cors");
-
 app.use(cors());
-
-
 
 const PORT = 4000;
 
-const MARKET_URL = `${process.env.BASE_URL}/current-candle`;
-
-
-
-// hardcoded symbol used by frontend for matching
-
+// hardcoded default symbol used before first candle comes in
 const STRATEGY_SYMBOL = "NIFTY 10MAR26 24600 CE";
-
-
 
 let candleHistory = [];
 
-
-
 let latestEvaluation = {
-
   symbol: STRATEGY_SYMBOL,
-
   signal: "WAIT",
-
   ema10: null,
-
   ema20: null,
-
   candleCount: 0,
-
   lastCandleTime: null,
-
   engineStatus: "starting",
-
 };
 
-
-
-function getJson(url) {
-
-  return new Promise((resolve, reject) => {
-
-    http
-
-      .get(url, (res) => {
-
-        let data = "";
-
-
-
-        res.on("data", (chunk) => {
-
-          data += chunk;
-
-        });
-
-
-
-        res.on("end", () => {
-
-          try {
-
-            resolve(JSON.parse(data));
-
-          } catch (error) {
-
-            reject(error);
-
-          }
-
-        });
-
-      })
-
-      .on("error", (error) => {
-
-        reject(error);
-
-      });
-
-  });
-
-}
-
-
-
-async function pollMarketAndEvaluate() {
-
-  try {
-
-    const candle = await getJson(MARKET_URL);
-
-
-
-    if (!candle || candle.message) {
-
-      latestEvaluation = {
-
-        ...latestEvaluation,
-
-        symbol: STRATEGY_SYMBOL,
-
-        engineStatus: "no-candle",
-
-      };
-
-      return;
-
-    }
-
-
-
-    const lastSavedTime = candleHistory[candleHistory.length - 1]?.time;
-
-
-
-    if (lastSavedTime === candle.time) {
-
-      latestEvaluation = {
-
-        ...latestEvaluation,
-
-        symbol: STRATEGY_SYMBOL,
-
-        engineStatus: "waiting-next-candle",
-
-      };
-
-      return;
-
-    }
-
-
-
-    candleHistory.push(candle);
-
-
-
-    const result = chatGptStrategy(candleHistory);
-
-    // const result = surStrategy(candleHistory);
-
-    // const result = evaluateEMACross(candleHistory);
-
-
-
-    latestEvaluation = {
-
-      symbol: STRATEGY_SYMBOL,
-
-      ...result,
-
-      candleCount: candleHistory.length,
-
-      lastCandleTime: candle.time,
-
-      engineStatus: "running",
-
-    };
-
-
-
-    console.log("Strategy result:", latestEvaluation);
-
-  } catch (error) {
-
-    latestEvaluation = {
-
-      ...latestEvaluation,
-
-      symbol: STRATEGY_SYMBOL,
-
-      engineStatus: "error",
-
-      error: error.message,
-
-    };
-
-
-
-    console.log("Strategy polling error:", error.message);
-
-  }
-
-}
-
-
-
 app.get("/", (req, res) => {
-
   res.send("Strategy engine running");
-
 });
-
-
 
 app.get("/evaluate", (req, res) => {
+  const requestedSymbol = req.query.symbol;
 
-  res.json({
+  // if no symbol provided → return latest
+  if (!requestedSymbol) {
+    return res.json({
+      ...latestEvaluation,
+      candles: candleHistory.slice(-5),
+    });
+  }
 
-    ...latestEvaluation,
+  // if symbol matches → return data
+  if (requestedSymbol === latestEvaluation.symbol) {
+    return res.json({
+      ...latestEvaluation,
+      candles: candleHistory.slice(-5),
+    });
+  }
 
-    symbol: STRATEGY_SYMBOL,
-
-    candles: candleHistory.slice(-5),
-
+  // if symbol doesn't match → return empty state
+  return res.json({
+    symbol: requestedSymbol,
+    signal: "WAIT",
+    ema10: null,
+    ema20: null,
+    candleCount: 0,
+    lastCandleTime: null,
+    engineStatus: "no-data",
+    candles: [],
   });
-
 });
-
-
 
 app.post("/evaluate", (req, res) => {
   const candle = req.body.candle;
   const symbol = req.body.symbol;
 
-  if (!candle || !symbol) {
+  if (!symbol || !candle) {
     return res.status(400).json({
       message: "symbol and candle are required",
+    });
+  }
+
+  if (
+    candle.time === undefined ||
+    candle.open === undefined ||
+    candle.high === undefined ||
+    candle.low === undefined ||
+    candle.close === undefined
+  ) {
+    return res.status(400).json({
+      message: "candle must contain time, open, high, low, close",
     });
   }
 
@@ -254,7 +97,15 @@ app.post("/evaluate", (req, res) => {
     });
   }
 
-  candleHistory.push(candle);
+  const normalizedCandle = {
+    time: candle.time,
+    open: Number(candle.open),
+    high: Number(candle.high),
+    low: Number(candle.low),
+    close: Number(candle.close),
+  };
+
+  candleHistory.push(normalizedCandle);
 
   const result = evaluateEMACross(candleHistory);
 
@@ -262,55 +113,33 @@ app.post("/evaluate", (req, res) => {
     symbol,
     ...result,
     candleCount: candleHistory.length,
-    lastCandleTime: candle.time,
+    lastCandleTime: normalizedCandle.time,
     engineStatus: "running",
   };
 
+  console.log("New candle received for:", symbol);
+  console.log("New candle received:", normalizedCandle);
   console.log("Strategy result:", latestEvaluation);
 
   res.json(latestEvaluation);
 });
 
-
-
 app.get("/reset-engine", (req, res) => {
-
   candleHistory = [];
 
-
-
   latestEvaluation = {
-
     symbol: STRATEGY_SYMBOL,
-
     signal: "WAIT",
-
     ema10: null,
-
     ema20: null,
-
     candleCount: 0,
-
     lastCandleTime: null,
-
     engineStatus: "reset",
-
   };
 
-
-
   res.json({ message: "Strategy engine reset successful" });
-
 });
 
-
-
-// setInterval(pollMarketAndEvaluate, 1000);
-
-
-
 app.listen(PORT, () => {
-
   console.log(`Strategy engine running on port ${PORT}`);
-
 });
