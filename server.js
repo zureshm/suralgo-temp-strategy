@@ -14,20 +14,11 @@ app.use(cors());
 
 const PORT = 4000;
 
-// hardcoded default symbol used before first candle comes in
-const STRATEGY_SYMBOL = "NIFTY 10MAR26 24600 CE";
+// Store candles separately for each symbol
+const candleHistoryBySymbol = {};
 
-let candleHistory = [];
-
-let latestEvaluation = {
-  symbol: STRATEGY_SYMBOL,
-  signal: "WAIT",
-  ema10: null,
-  ema20: null,
-  candleCount: 0,
-  lastCandleTime: null,
-  engineStatus: "starting",
-};
+// Store latest evaluation separately for each symbol
+const latestEvaluationBySymbol = {};
 
 app.get("/", (req, res) => {
   res.send("Strategy engine running");
@@ -36,32 +27,34 @@ app.get("/", (req, res) => {
 app.get("/evaluate", (req, res) => {
   const requestedSymbol = req.query.symbol;
 
-  // if no symbol provided → return latest
+  // If no symbol provided, return a simple engine status
   if (!requestedSymbol) {
     return res.json({
-      ...latestEvaluation,
-      candles: candleHistory.slice(-5),
+      message: "Strategy engine running",
+      engineStatus: "running",
     });
   }
 
-  // if symbol matches → return data
-  if (requestedSymbol === latestEvaluation.symbol) {
+  const candles = candleHistoryBySymbol[requestedSymbol] || [];
+  const latestEvaluation = latestEvaluationBySymbol[requestedSymbol];
+
+  // If symbol has no data yet, return empty state
+  if (!latestEvaluation) {
     return res.json({
-      ...latestEvaluation,
-      candles: candleHistory.slice(-5),
+      symbol: requestedSymbol,
+      signal: "WAIT",
+      ema10: null,
+      ema20: null,
+      candleCount: 0,
+      lastCandleTime: null,
+      engineStatus: "no-data",
+      candles: [],
     });
   }
 
-  // if symbol doesn't match → return empty state
   return res.json({
-    symbol: requestedSymbol,
-    signal: "WAIT",
-    ema10: null,
-    ema20: null,
-    candleCount: 0,
-    lastCandleTime: null,
-    engineStatus: "no-data",
-    candles: [],
+    ...latestEvaluation,
+    candles: candles.slice(-5),
   });
 });
 
@@ -69,12 +62,14 @@ app.post("/evaluate", (req, res) => {
   const candle = req.body.candle;
   const symbol = req.body.symbol;
 
+  // Symbol and candle must both be present
   if (!symbol || !candle) {
     return res.status(400).json({
       message: "symbol and candle are required",
     });
   }
 
+  // Candle must contain all required fields
   if (
     candle.time === undefined ||
     candle.open === undefined ||
@@ -87,12 +82,26 @@ app.post("/evaluate", (req, res) => {
     });
   }
 
-  const lastSavedTime = candleHistory[candleHistory.length - 1]?.time;
+  // Create symbol bucket first time this symbol comes in
+  if (!candleHistoryBySymbol[symbol]) {
+    candleHistoryBySymbol[symbol] = [];
+  }
+
+  const candles = candleHistoryBySymbol[symbol];
+
+  // Prevent duplicate candle time for same symbol
+  const lastSavedTime = candles[candles.length - 1]?.time;
 
   if (lastSavedTime === candle.time) {
     return res.json({
-      ...latestEvaluation,
-      symbol,
+      ...(latestEvaluationBySymbol[symbol] || {
+        symbol,
+        signal: "WAIT",
+        ema10: null,
+        ema20: null,
+        candleCount: candles.length,
+        lastCandleTime: candle.time,
+      }),
       engineStatus: "duplicate-candle",
     });
   }
@@ -105,37 +114,35 @@ app.post("/evaluate", (req, res) => {
     close: Number(candle.close),
   };
 
-  candleHistory.push(normalizedCandle);
+  candles.push(normalizedCandle);
 
-  const result = evaluateEMACross(candleHistory);
+  const result = evaluateEMACross(candles);
 
-  latestEvaluation = {
+  latestEvaluationBySymbol[symbol] = {
     symbol,
     ...result,
-    candleCount: candleHistory.length,
+    candleCount: candles.length,
     lastCandleTime: normalizedCandle.time,
     engineStatus: "running",
   };
 
   console.log("New candle received for:", symbol);
   console.log("New candle received:", normalizedCandle);
-  console.log("Strategy result:", latestEvaluation);
+  console.log("Strategy result:", latestEvaluationBySymbol[symbol]);
 
-  res.json(latestEvaluation);
+  res.json(latestEvaluationBySymbol[symbol]);
 });
 
 app.get("/reset-engine", (req, res) => {
-  candleHistory = [];
+  // Clear all symbols from candle history
+  for (const symbol in candleHistoryBySymbol) {
+    delete candleHistoryBySymbol[symbol];
+  }
 
-  latestEvaluation = {
-    symbol: STRATEGY_SYMBOL,
-    signal: "WAIT",
-    ema10: null,
-    ema20: null,
-    candleCount: 0,
-    lastCandleTime: null,
-    engineStatus: "reset",
-  };
+  // Clear all symbols from latest evaluations
+  for (const symbol in latestEvaluationBySymbol) {
+    delete latestEvaluationBySymbol[symbol];
+  }
 
   res.json({ message: "Strategy engine reset successful" });
 });
