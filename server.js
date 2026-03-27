@@ -16,6 +16,9 @@ const PORT = 4000;
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};
+// keeps track of whether history was already loaded for a symbol
+// useful later so live candles do not accidentally re-initialize everything
+let historyLoadedBySymbol = {};
 
 // Store latest evaluation separately for each symbol
 const latestEvaluationBySymbol = {};
@@ -59,17 +62,69 @@ app.get("/evaluate", (req, res) => {
 });
 
 app.post("/evaluate", (req, res) => {
-  const candle = req.body.candle;
-  const symbol = req.body.symbol;
+  // mode = "history" => preload old candles
+  // mode = "live" => one newly completed candle
+  const { symbol, candle, candles, mode = "live" } = req.body;
 
-  // Symbol and candle must both be present
-  if (!symbol || !candle) {
+  if (!symbol) {
     return res.status(400).json({
-      message: "symbol and candle are required",
+      message: "symbol is required",
     });
   }
 
-  // Candle must contain all required fields
+  if (!candleHistoryBySymbol[symbol]) {
+    candleHistoryBySymbol[symbol] = [];
+  }
+
+  const symbolCandles = candleHistoryBySymbol[symbol];
+
+  // HISTORY PRELOAD MODE
+  if (mode === "history") {
+    if (!Array.isArray(candles) || candles.length === 0) {
+      return res.status(400).json({
+        message: "candles array is required for history mode",
+      });
+    }
+
+    const normalizedHistory = candles.map((item) => {
+      return {
+        time: item.time,
+        open: Number(item.open),
+        high: Number(item.high),
+        low: Number(item.low),
+        close: Number(item.close),
+      };
+    });
+
+    candleHistoryBySymbol[symbol] = normalizedHistory;
+    historyLoadedBySymbol[symbol] = true;
+
+    const result = evaluateEMACross(candleHistoryBySymbol[symbol]);
+    const lastCandle =
+      candleHistoryBySymbol[symbol][candleHistoryBySymbol[symbol].length - 1];
+
+    latestEvaluationBySymbol[symbol] = {
+      symbol,
+      ...result,
+      candleCount: candleHistoryBySymbol[symbol].length,
+      lastCandleTime: lastCandle ? lastCandle.time : null,
+      engineStatus: "history-loaded",
+    };
+
+    console.log("History loaded for:", symbol);
+    console.log("History candle count:", candleHistoryBySymbol[symbol].length);
+    console.log("Strategy result:", latestEvaluationBySymbol[symbol]);
+
+    return res.json(latestEvaluationBySymbol[symbol]);
+  }
+
+  // LIVE CANDLE MODE
+  if (!candle) {
+    return res.status(400).json({
+      message: "candle is required for live mode",
+    });
+  }
+
   if (
     candle.time === undefined ||
     candle.open === undefined ||
@@ -82,15 +137,7 @@ app.post("/evaluate", (req, res) => {
     });
   }
 
-  // Create symbol bucket first time this symbol comes in
-  if (!candleHistoryBySymbol[symbol]) {
-    candleHistoryBySymbol[symbol] = [];
-  }
-
-  const candles = candleHistoryBySymbol[symbol];
-
-  // Prevent duplicate candle time for same symbol
-  const lastSavedTime = candles[candles.length - 1]?.time;
+  const lastSavedTime = symbolCandles[symbolCandles.length - 1]?.time;
 
   if (lastSavedTime === candle.time) {
     return res.json({
@@ -99,7 +146,7 @@ app.post("/evaluate", (req, res) => {
         signal: "WAIT",
         ema10: null,
         ema20: null,
-        candleCount: candles.length,
+        candleCount: symbolCandles.length,
         lastCandleTime: candle.time,
       }),
       engineStatus: "duplicate-candle",
@@ -114,16 +161,16 @@ app.post("/evaluate", (req, res) => {
     close: Number(candle.close),
   };
 
-  candles.push(normalizedCandle);
+  symbolCandles.push(normalizedCandle);
 
-  const result = evaluateEMACross(candles);
+  const result = evaluateEMACross(symbolCandles);
 
   latestEvaluationBySymbol[symbol] = {
     symbol,
     ...result,
-    candleCount: candles.length,
+    candleCount: symbolCandles.length,
     lastCandleTime: normalizedCandle.time,
-    engineStatus: "running",
+    engineStatus: historyLoadedBySymbol[symbol] ? "running" : "running-no-history",
   };
 
   console.log("New candle received for:", symbol);
