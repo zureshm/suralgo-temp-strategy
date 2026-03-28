@@ -99,7 +99,7 @@ app.post("/evaluate", (req, res) => {
     candleHistoryBySymbol[symbol] = normalizedHistory;
     historyLoadedBySymbol[symbol] = true;
 
-    const result = evaluateEMACross(candleHistoryBySymbol[symbol]);
+    const result = chatGptStrategy(candleHistoryBySymbol[symbol]);
     const lastCandle =
       candleHistoryBySymbol[symbol][candleHistoryBySymbol[symbol].length - 1];
 
@@ -164,7 +164,7 @@ app.post("/evaluate", (req, res) => {
 
   symbolCandles.push(normalizedCandle);
 
-  const result = evaluateEMACross(symbolCandles);
+  const result = chatGptStrategy(symbolCandles);
 
   const currentEval = {
     symbol,
@@ -175,17 +175,19 @@ app.post("/evaluate", (req, res) => {
     engineStatus: historyLoadedBySymbol[symbol] ? "running" : "running-no-history",
   };
 
-  // Only store BUY/SELL signals. Don't let WAIT overwrite a previous BUY/SELL,
-  // so the signal persists until the server-side trade engine polls it via GET.
-  // (With fast fake-candles, a BUY exists for only 1 second before the next
-  //  candle overwrites it with WAIT — this prevents that race condition.)
+  // Sticky signal: don't let WAIT overwrite a previous BUY/SELL immediately,
+  // so the server-side trade engine has time to poll it via GET.
+  // But expire the sticky signal after 3 candles to prevent stale activation.
   const prev = latestEvaluationBySymbol[symbol];
   if (result.signal !== "WAIT") {
     latestEvaluationBySymbol[symbol] = currentEval;
   } else if (!prev || prev.signal === "WAIT") {
     latestEvaluationBySymbol[symbol] = currentEval;
+  } else if (symbolCandles.length > prev.candleCount + 3) {
+    // Sticky signal expired (more than 3 candles old) — let WAIT through
+    latestEvaluationBySymbol[symbol] = currentEval;
   }
-  // else: previous was BUY/SELL, current is WAIT → keep previous
+  // else: previous was BUY/SELL within 3 candles → keep it
 
   console.log("New candle received for:", symbol);
   console.log("New candle received:", normalizedCandle);
