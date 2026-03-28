@@ -99,7 +99,7 @@ app.post("/evaluate", (req, res) => {
     candleHistoryBySymbol[symbol] = normalizedHistory;
     historyLoadedBySymbol[symbol] = true;
 
-    const result = evaluateEMACross(candleHistoryBySymbol[symbol]);
+    const result = chatGptStrategy(candleHistoryBySymbol[symbol]);
     const lastCandle =
       candleHistoryBySymbol[symbol][candleHistoryBySymbol[symbol].length - 1];
 
@@ -163,7 +163,7 @@ app.post("/evaluate", (req, res) => {
 
   symbolCandles.push(normalizedCandle);
 
-  const result = evaluateEMACross(symbolCandles);
+  const result = chatGptStrategy(symbolCandles);
 
   latestEvaluationBySymbol[symbol] = {
     symbol,
@@ -180,7 +180,7 @@ app.post("/evaluate", (req, res) => {
   res.json(latestEvaluationBySymbol[symbol]);
 });
 
-app.get("/reset-engine", (req, res) => {
+app.post("/reset-engine", (req, res) => {
   // Clear all symbols from candle history
   for (const symbol in candleHistoryBySymbol) {
     delete candleHistoryBySymbol[symbol];
