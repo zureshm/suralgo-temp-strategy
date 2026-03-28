@@ -99,13 +99,14 @@ app.post("/evaluate", (req, res) => {
     candleHistoryBySymbol[symbol] = normalizedHistory;
     historyLoadedBySymbol[symbol] = true;
 
-    const result = chatGptStrategy(candleHistoryBySymbol[symbol]);
+    const result = evaluateEMACross(candleHistoryBySymbol[symbol]);
     const lastCandle =
       candleHistoryBySymbol[symbol][candleHistoryBySymbol[symbol].length - 1];
 
     latestEvaluationBySymbol[symbol] = {
       symbol,
       ...result,
+      close: lastCandle ? lastCandle.close : null,
       candleCount: candleHistoryBySymbol[symbol].length,
       lastCandleTime: lastCandle ? lastCandle.time : null,
       engineStatus: "history-loaded",
@@ -163,21 +164,36 @@ app.post("/evaluate", (req, res) => {
 
   symbolCandles.push(normalizedCandle);
 
-  const result = chatGptStrategy(symbolCandles);
+  const result = evaluateEMACross(symbolCandles);
 
-  latestEvaluationBySymbol[symbol] = {
+  const currentEval = {
     symbol,
     ...result,
+    close: normalizedCandle.close,
     candleCount: symbolCandles.length,
     lastCandleTime: normalizedCandle.time,
     engineStatus: historyLoadedBySymbol[symbol] ? "running" : "running-no-history",
   };
 
+  // Only store BUY/SELL signals. Don't let WAIT overwrite a previous BUY/SELL,
+  // so the signal persists until the server-side trade engine polls it via GET.
+  // (With fast fake-candles, a BUY exists for only 1 second before the next
+  //  candle overwrites it with WAIT — this prevents that race condition.)
+  const prev = latestEvaluationBySymbol[symbol];
+  if (result.signal !== "WAIT") {
+    latestEvaluationBySymbol[symbol] = currentEval;
+  } else if (!prev || prev.signal === "WAIT") {
+    latestEvaluationBySymbol[symbol] = currentEval;
+  }
+  // else: previous was BUY/SELL, current is WAIT → keep previous
+
   console.log("New candle received for:", symbol);
   console.log("New candle received:", normalizedCandle);
-  console.log("Strategy result:", latestEvaluationBySymbol[symbol]);
+  console.log("Stored signal:", latestEvaluationBySymbol[symbol].signal,
+    "| Current eval:", result.signal);
 
-  res.json(latestEvaluationBySymbol[symbol]);
+  // POST response always returns the actual per-candle evaluation (for fake-candles console)
+  res.json(currentEval);
 });
 
 app.post("/reset-engine", (req, res) => {
