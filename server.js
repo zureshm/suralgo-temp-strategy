@@ -99,7 +99,7 @@ app.post("/evaluate", (req, res) => {
     candleHistoryBySymbol[symbol] = normalizedHistory;
     historyLoadedBySymbol[symbol] = true;
 
-    const result = chatGptStrategy(candleHistoryBySymbol[symbol]);
+    const result = surStrategy(candleHistoryBySymbol[symbol]);
     const lastCandle =
       candleHistoryBySymbol[symbol][candleHistoryBySymbol[symbol].length - 1];
 
@@ -164,7 +164,7 @@ app.post("/evaluate", (req, res) => {
 
   symbolCandles.push(normalizedCandle);
 
-  const result = chatGptStrategy(symbolCandles);
+  const result = surStrategy(symbolCandles);
 
   const currentEval = {
     symbol,
@@ -193,6 +193,7 @@ app.post("/evaluate", (req, res) => {
   console.log("New candle received:", normalizedCandle);
   console.log("Stored signal:", latestEvaluationBySymbol[symbol].signal,
     "| Current eval:", result.signal);
+  console.log("Strategy result:", latestEvaluationBySymbol[symbol]);
 
   // POST response always returns the actual per-candle evaluation (for fake-candles console)
   res.json(currentEval);
