@@ -118,7 +118,7 @@ function xunder(pA, pB, nA, nB) { return pA != null && pB != null && nA != null 
 // ── Main strategy engine ────────────────────────────────────────────────────
 
 function surStrategy(candles) {
-  if (!candles || candles.length < 60) {
+  if (!candles || candles.length < 35) {
     return { signal: "WAIT", ema10: null, ema20: null };
   }
 
