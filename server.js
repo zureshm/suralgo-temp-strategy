@@ -6,9 +6,13 @@ const cors = require("cors");
 const { evaluateEMACross } = require("./strategy/evaluateEMACross");
 const { surStrategy } = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
+const { claudSurStrategy } = require("./strategy/claudSurStrategy");
+const { superUTBotStrategy } = require("./strategy/superUTBotStrategy");
+const { trippleUTBotStrategy } = require("./strategy/trippleUTBotStrategy");
+const { doubleUTBotStrategy } = require("./strategy/doubleUTBotStrategy");
 
 const app = express();
-
+ 
 app.use(express.json());
 app.use(cors());
 
@@ -99,7 +103,7 @@ app.post("/evaluate", (req, res) => {
     candleHistoryBySymbol[symbol] = normalizedHistory;
     historyLoadedBySymbol[symbol] = true;
 
-    const result = surStrategy(candleHistoryBySymbol[symbol]);
+    const result = doubleUTBotStrategy(candleHistoryBySymbol[symbol]);
     const lastCandle =
       candleHistoryBySymbol[symbol][candleHistoryBySymbol[symbol].length - 1];
 
@@ -164,7 +168,7 @@ app.post("/evaluate", (req, res) => {
 
   symbolCandles.push(normalizedCandle);
 
-  const result = surStrategy(symbolCandles);
+  const result = doubleUTBotStrategy(symbolCandles);
 
   const currentEval = {
     symbol,
