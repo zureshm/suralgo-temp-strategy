@@ -1,8 +1,8 @@
 // =============================================================================
-// TrippleUTBotStrategy — 3x UT Bot 2 + Supertrend
-// UT Bot 1: Key=2, ATR=1  (fast entry)
-// UT Bot 2: Key=2, ATR=300 (slow exit)
-// UT Bot 3: Key=5, ATR=1  (slower entry — catches what UT Bot 1 misses)
+// TrippleUTBotStrategy — 2x classic UT Bot + 1x UT Bot 2026 + Supertrend
+// UT Bot 1: Classic — Key=2, ATR=1  (fast entry)
+// UT Bot 2: Classic — Key=2, ATR=300 (slow exit)
+// UT Bot 3: 2026 Edition — Buy Key=2, Buy ATR=300 / Sell Key=2, Sell ATR=1
 // BUY:  Supertrend bullish + (UT Bot 1 BUY OR UT Bot 3 BUY)
 // SELL: UT Bot 1 OR UT Bot 2 SELL signal (whichever first)
 // =============================================================================
@@ -97,7 +97,7 @@ function trippleUTBotStrategy(candles) {
   // ── UT Bot state ──
   let ts1 = 0, pos1 = 0;  // UT Bot 1 (Key=2, ATR=1)
   let ts2 = 0, pos2 = 0;  // UT Bot 2 (Key=2, ATR=300)
-  let ts3 = 0, pos3 = 0;  // UT Bot 3 (Key=5, ATR=1)
+  let ts3 = 0, pos3 = 0;  // UT Bot 3 — 2026 Edition (Buy Key=2, ATR=300 / Sell Key=2, ATR=1)
   let inPosition = false;
 
   let lastSignal = "WAIT", lastTrade = null, lastReason = "No signal";
@@ -153,25 +153,37 @@ function trippleUTBotStrategy(candles) {
       sell2 = pos2 === -1 && prevPos2 !== -1;
     }
 
-    // ── UT Bot 3 (Key=5, ATR=1) — faithful Pine UT Bot 2 logic ──
+    // ── UT Bot 3 — 2026 Edition (Buy Key=2, ATR=300 / Sell Key=2, ATR=1) ──
     let buy3 = false, sell3 = false;
-    if (atr1[i] != null) {
-      const nLoss3 = 5 * atr1[i];
-      const prevTS3 = ts3;
-
-      if (C[i] > prevTS3 && C[i - 1] > prevTS3) {
-        ts3 = Math.max(prevTS3, C[i] - nLoss3);
-      } else if (C[i] < prevTS3 && C[i - 1] < prevTS3) {
-        ts3 = Math.min(prevTS3, C[i] + nLoss3);
-      } else if (C[i] > prevTS3) {
-        ts3 = C[i] - nLoss3;
-      } else {
-        ts3 = C[i] + nLoss3;
-      }
-
+    if (atr300[i] != null && atr1[i] != null) {
+      const nLossBuy3  = 2 * atr300[i]; // Buy engine: ceiling when short
+      const nLossSell3 = 2 * atr1[i];   // Sell engine: floor when long
+      const prevTS3  = ts3;
       const prevPos3 = pos3;
-      if (C[i - 1] < prevTS3 && C[i] > ts3) pos3 = 1;
-      else if (C[i - 1] > prevTS3 && C[i] < ts3) pos3 = -1;
+
+      if (prevPos3 === 1) {
+        // Currently LONG — trail up using Sell params (floor)
+        const newFloor = C[i] - nLossSell3;
+        if (C[i] < prevTS3) {
+          // Stop hit — flip to SHORT, init ceiling with Buy params
+          ts3 = C[i] + nLossBuy3;
+          pos3 = -1;
+        } else {
+          ts3 = Math.max(prevTS3, newFloor);
+          pos3 = 1;
+        }
+      } else {
+        // Currently SHORT (or start) — trail down using Buy params (ceiling)
+        const newCeiling = C[i] + nLossBuy3;
+        if (C[i] > prevTS3) {
+          // Stop hit — flip to LONG, init floor with Sell params
+          ts3 = C[i] - nLossSell3;
+          pos3 = 1;
+        } else {
+          ts3 = Math.min(prevTS3, newCeiling);
+          pos3 = -1;
+        }
+      }
 
       buy3  = pos3 === 1  && prevPos3 !== 1;
       sell3 = pos3 === -1 && prevPos3 !== -1;
@@ -180,11 +192,11 @@ function trippleUTBotStrategy(candles) {
     // ── Supertrend direction ──
     const stBullish = stDir[i] === 1;
 
-    // ── BUY: Supertrend bullish + (UT Bot 1 OR UT Bot 3) BUY signal ──
-    if (!inPosition && stBullish && (buy1 || buy3)) {
+    // ── BUY: Supertrend bullish + (UT Bot 1 OR UT Bot 2 OR UT Bot 3) BUY signal ──
+    if (!inPosition && stBullish && (buy1 || buy2 || buy3)) {
       inPosition = true;
       sig = "BUY"; trade = "ENTRY";
-      reason = buy1 ? "UT Bot 1 buy + ST bullish" : "UT Bot 3 buy + ST bullish";
+      reason = buy1 ? "UT Bot 1 buy + ST bullish" : buy2 ? "UT Bot 2 buy + ST bullish" : "UT Bot 3 buy + ST bullish";
     }
 
     // ── SELL: UT Bot 1 OR UT Bot 2 SELL signal (whichever first) ──

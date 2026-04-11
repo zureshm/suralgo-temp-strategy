@@ -8,8 +8,8 @@ const { surStrategy } = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
 const { claudSurStrategy } = require("./strategy/claudSurStrategy");
 const { superUTBotStrategy } = require("./strategy/superUTBotStrategy");
-const { trippleUTBotStrategy } = require("./strategy/trippleUTBotStrategy");
 const { doubleUTBotStrategy } = require("./strategy/doubleUTBotStrategy");
+const { trippleUTBotStrategy } = require("./strategy/trippleUTBotStrategy");
 
 const app = express();
  
