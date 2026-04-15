@@ -184,13 +184,13 @@ function trippleUTBotStrategy(candles) {
     // ── BUY: ST bullish + one of three entry paths ──
     // 1) UT Bot 1 direct buy
     // 2) UT Bot 2 direct buy
-    // 3) UT Bot 3 catchup buy (when both UT1 & UT2 already bullish)
-    if (!inPosition && stBullish && (buy1 || buy2 || (buy3 && pos1 === 1 && pos2 === 1))) {
+    // 3) UT Bot 3 catchup buy (when UT1 already bullish)
+    if (!inPosition && stBullish && (buy1 || buy2 || (buy3 && pos1 === 1))) {
       inPosition = true;
       sig = "BUY"; trade = "ENTRY";
       reason = buy1 ? "UT Bot 1 buy + ST bullish"
              : buy2 ? "UT Bot 2 buy + ST bullish"
-             : "UT Bot 3 catchup (UT1+UT2 bullish) + ST bullish";
+             : "UT Bot 3 catchup (UT1 bullish) + ST bullish";
     }
 
     // ── SELL: UT Bot 1 OR UT Bot 2 SELL signal (whichever first) ──
