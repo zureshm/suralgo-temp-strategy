@@ -1,9 +1,9 @@
 // =============================================================================
-// DoubleUTBotStrategy — 2x UT Bot 2 + Supertrend
-// UT Bot 1: Key=2, ATR=1   (fast)
-// UT Bot 2: Key=2, ATR=300  (slow)
-// BUY:  Supertrend bullish + close > VWAP + (UT Bot 1 BUY OR UT Bot 2 BUY)
-// SELL: UT Bot 1 OR UT Bot 2 SELL signal (whichever first)
+// SumeshMandanStrategy — 2x UT Bot, no Supertrend
+// UT Bot 1: Key=2, ATR=1  (fast)
+// UT Bot 2: Key=3, ATR=300 (slow)
+// BUY:  Both UT Bots are bullish (pos1 === 1 AND pos2 === 1) + close > VWAP
+// SELL: Either UT Bot flips bearish (sell1 OR sell2, or pos drops from 1)
 // VWAP: Calculated from volume data; if volume unavailable, VWAP = 0 (gate bypassed)
 // =============================================================================
 
@@ -30,58 +30,13 @@ function rmaSeries(src, period) {
 
 function atrSeries(H, L, C, period) { return rmaSeries(trueRangeSeries(H, L, C), period); }
 
-// ── Supertrend (faithful Pine Script conversion) ────────────────────────────
-
-function supertrendSeries(H, L, C, period, multiplier) {
-  const atr = atrSeries(H, L, C, period);
-  const len = C.length;
-  const st = new Array(len).fill(null);
-  const dir = new Array(len).fill(0);
-  const up = new Array(len).fill(null);
-  const dn = new Array(len).fill(null);
-
-  for (let i = 0; i < len; i++) {
-    if (atr[i] == null) continue;
-    const hl2 = (H[i] + L[i]) / 2;
-    const rawUp = hl2 - multiplier * atr[i];
-    const rawDn = hl2 + multiplier * atr[i];
-
-    if (i > 0 && up[i - 1] != null && C[i - 1] > up[i - 1]) {
-      up[i] = Math.max(rawUp, up[i - 1]);
-    } else {
-      up[i] = rawUp;
-    }
-
-    if (i > 0 && dn[i - 1] != null && C[i - 1] < dn[i - 1]) {
-      dn[i] = Math.min(rawDn, dn[i - 1]);
-    } else {
-      dn[i] = rawDn;
-    }
-
-    if (i === 0 || dir[i - 1] === 0) {
-      dir[i] = C[i] > dn[i] ? 1 : -1;
-    } else if (dir[i - 1] === -1 && C[i] > dn[i - 1]) {
-      dir[i] = 1;
-    } else if (dir[i - 1] === 1 && C[i] < up[i - 1]) {
-      dir[i] = -1;
-    } else {
-      dir[i] = dir[i - 1];
-    }
-
-    st[i] = dir[i] === 1 ? up[i] : dn[i];
-  }
-
-  return { supertrend: st, direction: dir };
-}
-
 // ── Main strategy engine ────────────────────────────────────────────────────
 
-function doubleUTBotStrategy(candles) {
+function sumeshMandanStrategy(candles) {
   if (!candles || candles.length < 35) {
     return { signal: "WAIT", trade: null, reason: "Not enough data" };
   }
 
-  const O = candles.map(c => Number(c.open));
   const H = candles.map(c => Number(c.high));
   const L = candles.map(c => Number(c.low));
   const C = candles.map(c => Number(c.close));
@@ -99,15 +54,12 @@ function doubleUTBotStrategy(candles) {
   }
 
   // ATR series for both UT Bots
-  const atr1   = atrSeries(H, L, C, 1);   // fast
-  const atr300 = atrSeries(H, L, C, 300); // slow
-
-  // Supertrend (ATR Length 10, Factor 3)
-  const { supertrend: stLine, direction: stDir } = supertrendSeries(H, L, C, 10, 3);
+  const atr1   = atrSeries(H, L, C, 1);   // UT Bot 1 (Key=2, ATR=1)
+  const atr300 = atrSeries(H, L, C, 300); // UT Bot 2 (Key=3, ATR=300)
 
   // ── UT Bot state ──
   let ts1 = 0, pos1 = 0;  // UT Bot 1 (Key=2, ATR=1)
-  let ts2 = 0, pos2 = 0;  // UT Bot 2 (Key=2, ATR=300)
+  let ts2 = 0, pos2 = 0;  // UT Bot 2 (Key=3, ATR=300)
   let inPosition = false;
 
   let lastSignal = "WAIT", lastTrade = null, lastReason = "No signal";
@@ -115,8 +67,7 @@ function doubleUTBotStrategy(candles) {
   for (let i = 1; i < N; i++) {
     let sig = "WAIT", trade = null, reason = "No signal";
 
-    // ── UT Bot 1 (Key=2, ATR=1) — faithful Pine UT Bot 2 logic ──
-    let buy1 = false, sell1 = false;
+    // ── UT Bot 1 (Key=2, ATR=1) ──
     if (atr1[i] != null) {
       const nLoss1 = 2 * atr1[i];
       const prevTS1 = ts1;
@@ -134,15 +85,11 @@ function doubleUTBotStrategy(candles) {
       const prevPos1 = pos1;
       if (C[i - 1] < prevTS1 && C[i] > ts1) pos1 = 1;
       else if (C[i - 1] > prevTS1 && C[i] < ts1) pos1 = -1;
-
-      buy1  = pos1 === 1  && prevPos1 !== 1;
-      sell1 = pos1 === -1 && prevPos1 !== -1;
     }
 
-    // ── UT Bot 2 (Key=2, ATR=300) — faithful Pine UT Bot 2 logic ──
-    let buy2 = false, sell2 = false;
+    // ── UT Bot 2 (Key=3, ATR=300) ──
     if (atr300[i] != null) {
-      const nLoss2 = 2 * atr300[i];
+      const nLoss2 = 3 * atr300[i];
       const prevTS2 = ts2;
 
       if (C[i] > prevTS2 && C[i - 1] > prevTS2) {
@@ -158,29 +105,23 @@ function doubleUTBotStrategy(candles) {
       const prevPos2 = pos2;
       if (C[i - 1] < prevTS2 && C[i] > ts2) pos2 = 1;
       else if (C[i - 1] > prevTS2 && C[i] < ts2) pos2 = -1;
-
-      buy2  = pos2 === 1  && prevPos2 !== 1;
-      sell2 = pos2 === -1 && prevPos2 !== -1;
     }
-
-    // ── Supertrend direction ──
-    const stBullish = stDir[i] === 1;
 
     // ── VWAP gate: close must be above VWAP (if VWAP is 0, gate is bypassed) ──
     const aboveVwap = vwap[i] === 0 || C[i] > vwap[i];
 
-    // ── BUY: Supertrend bullish + close > VWAP + (UT Bot 1 OR UT Bot 2) BUY signal ──
-    if (!inPosition && stBullish && aboveVwap && (buy1 || buy2)) {
+    // ── BUY: Both UT Bots bullish + close > VWAP ──
+    if (!inPosition && pos1 === 1 && pos2 === 1 && aboveVwap) {
       inPosition = true;
       sig = "BUY"; trade = "ENTRY";
-      reason = buy1 ? "UT Bot 1 buy + ST bullish + above VWAP" : "UT Bot 2 buy + ST bullish + above VWAP";
+      reason = "Both UT Bots bullish (UT1 + UT2) + above VWAP";
     }
 
-    // ── SELL: UT Bot 1 OR UT Bot 2 SELL signal (whichever first) ──
-    if (inPosition && (sell1 || sell2)) {
+    // ── SELL: Either UT Bot flips bearish ──
+    if (inPosition && (pos1 !== 1 || pos2 !== 1)) {
       inPosition = false;
       sig = "SELL"; trade = "EXIT";
-      reason = sell1 ? "UT Bot 1 sell" : "UT Bot 2 sell";
+      reason = pos1 !== 1 ? "UT Bot 1 no longer bullish" : "UT Bot 2 no longer bullish";
     }
 
     lastSignal = sig; lastTrade = trade; lastReason = reason;
@@ -190,13 +131,13 @@ function doubleUTBotStrategy(candles) {
     signal: lastSignal,
     trade: lastTrade,
     reason: lastReason,
-    supertrend: stLine[N - 1],
-    stDirection: stDir[N - 1],
     utBot1Trail: ts1,
     utBot2Trail: ts2,
+    utBot1Pos: pos1,
+    utBot2Pos: pos2,
     vwap: vwap[N - 1],
     close: C[N - 1]
   };
 }
 
-module.exports = { doubleUTBotStrategy };
+module.exports = { sumeshMandanStrategy };
