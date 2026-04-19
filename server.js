@@ -11,6 +11,7 @@ const { superUTBotStrategy } = require("./strategy/superUTBotStrategy");
 const { doubleUTBotStrategy } = require("./strategy/doubleUTBotStrategy");
 const { trippleUTBotStrategy } = require("./strategy/trippleUTBotStrategy");
 const { quadUTBotStrategy } = require("./strategy/quadUTBotStrategy");
+const { sumeshMandanStrategy } = require("./strategy/SumeshMandanStrategy");
 
 const app = express();
  
@@ -98,13 +99,14 @@ app.post("/evaluate", (req, res) => {
         high: Number(item.high),
         low: Number(item.low),
         close: Number(item.close),
+        volume: Number(item.volume) || 0,
       };
     });
 
     candleHistoryBySymbol[symbol] = normalizedHistory;
     historyLoadedBySymbol[symbol] = true;
 
-    const result = quadUTBotStrategy(candleHistoryBySymbol[symbol]);
+    const result = superUTBotStrategy(candleHistoryBySymbol[symbol]);
     const lastCandle =
       candleHistoryBySymbol[symbol][candleHistoryBySymbol[symbol].length - 1];
 
@@ -165,11 +167,12 @@ app.post("/evaluate", (req, res) => {
     high: Number(candle.high),
     low: Number(candle.low),
     close: Number(candle.close),
+    volume: Number(candle.volume) || 0,
   };
 
   symbolCandles.push(normalizedCandle);
 
-  const result = quadUTBotStrategy(symbolCandles);
+  const result = superUTBotStrategy(symbolCandles);
 
   const currentEval = {
     symbol,

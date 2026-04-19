@@ -4,8 +4,9 @@
 // UT Bot 2: Classic — Key=2, ATR=300 (slow entry)
 // UT Bot 3: UT Bot Alerts — Key=3, ATR=10 (strict catchup entry)
 // UT Bot 4: Exit Bot — Key=3, ATR=300 (exit only)
-// BUY:  ST bullish + (UT1 direct, OR UT2 direct, OR UT3 catchup if UT1 bullish)
+// BUY:  ST bullish + close > VWAP + (UT1 direct, OR UT2 direct, OR UT3 catchup if UT1 bullish)
 // SELL: UT Bot 4 SELL signal only (reduces exits)
+// VWAP: Calculated from volume data; if volume unavailable, VWAP = 0 (gate bypassed)
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -86,7 +87,18 @@ function quadUTBotStrategy(candles) {
   const H = candles.map(c => Number(c.high));
   const L = candles.map(c => Number(c.low));
   const C = candles.map(c => Number(c.close));
+  const V = candles.map(c => Number(c.volume * 0) || 0);
   const N = C.length;
+
+  // ── VWAP: cumulative(typicalPrice * volume) / cumulative(volume) ──
+  const vwap = new Array(N).fill(0);
+  let cumTPV = 0, cumVol = 0;
+  for (let i = 0; i < N; i++) {
+    const tp = (H[i] + L[i] + C[i]) / 3;
+    cumTPV += tp * V[i];
+    cumVol += V[i];
+    vwap[i] = cumVol > 0 ? cumTPV / cumVol : 0;
+  }
 
   // ATR series for all UT Bots
   const atr1   = atrSeries(H, L, C, 1);   // UT Bot 1: fast
@@ -208,16 +220,19 @@ function quadUTBotStrategy(candles) {
     // ── Supertrend direction ──
     const stBullish = stDir[i] === 1;
 
-    // ── BUY: ST bullish + one of three entry paths ──
+    // ── VWAP gate: close must be above VWAP (if VWAP is 0, gate is bypassed) ──
+    const aboveVwap = vwap[i] === 0 || C[i] > vwap[i];
+
+    // ── BUY: ST bullish + close > VWAP + one of three entry paths ──
     // 1) UT Bot 1 direct buy
     // 2) UT Bot 2 direct buy
     // 3) UT Bot 3 catchup buy (when UT1 already bullish)
-    if (!inPosition && stBullish && (buy1 || buy2 || (buy3 && pos1 === 1))) {
+    if (!inPosition && stBullish && aboveVwap && (buy1 || buy2 || (buy3 && pos1 === 1))) {
       inPosition = true;
       sig = "BUY"; trade = "ENTRY";
-      reason = buy1 ? "UT Bot 1 buy + ST bullish"
-             : buy2 ? "UT Bot 2 buy + ST bullish"
-             : "UT Bot 3 catchup (UT1 bullish) + ST bullish";
+      reason = buy1 ? "UT Bot 1 buy + ST bullish + above VWAP"
+             : buy2 ? "UT Bot 2 buy + ST bullish + above VWAP"
+             : "UT Bot 3 catchup (UT1 bullish) + ST bullish + above VWAP";
     }
 
     // ── SELL: Only UT Bot 4 SELL signal (Key=3, ATR=300) ──
@@ -240,6 +255,7 @@ function quadUTBotStrategy(candles) {
     utBot2Trail: ts2,
     utBot3Trail: ts3,
     utBot4Trail: ts4,
+    vwap: vwap[N - 1],
     close: C[N - 1]
   };
 }
