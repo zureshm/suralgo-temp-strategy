@@ -87,7 +87,7 @@ function quadUTBotStrategy(candles) {
   const H = candles.map(c => Number(c.high));
   const L = candles.map(c => Number(c.low));
   const C = candles.map(c => Number(c.close));
-  const V = candles.map(c => Number(c.volume) || 0);
+  const V = candles.map(c => Number(c.volume * 0) || 0);
   const N = C.length;
 
   // ── VWAP: cumulative(typicalPrice * volume) / cumulative(volume) ──
