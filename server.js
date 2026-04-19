@@ -106,7 +106,7 @@ app.post("/evaluate", (req, res) => {
     candleHistoryBySymbol[symbol] = normalizedHistory;
     historyLoadedBySymbol[symbol] = true;
 
-    const result = doubleUTBotStrategy(candleHistoryBySymbol[symbol]);
+    const result = superUTBotStrategy(candleHistoryBySymbol[symbol]);
     const lastCandle =
       candleHistoryBySymbol[symbol][candleHistoryBySymbol[symbol].length - 1];
 
@@ -172,7 +172,7 @@ app.post("/evaluate", (req, res) => {
 
   symbolCandles.push(normalizedCandle);
 
-  const result = doubleUTBotStrategy(symbolCandles);
+  const result = superUTBotStrategy(symbolCandles);
 
   const currentEval = {
     symbol,
