@@ -7,15 +7,39 @@ const { evaluateEMACross } = require("./strategy/evaluateEMACross");
 const { surStrategy } = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
 const { claudSurStrategy } = require("./strategy/claudSurStrategy");
+const { utGptStrategy } = require("./strategy/UTGPTStrategy");
+const { utGptStrategy1 } = require("./strategy/UTGPTStrategy1");
+const { utGptStrategy2 } = require("./strategy/UTGPTStrategy2");
+const { superDoubleUT } = require("./strategy/superDoubleUT");
 const { superUTBotStrategy } = require("./strategy/superUTBotStrategy");
 const { doubleUTBotStrategy } = require("./strategy/doubleUTBotStrategy");
-const { trippleUTBotStrategy } = require("./strategy/trippleUTBotStrategy");
-const { quadUTBotStrategy } = require("./strategy/quadUTBotStrategy");
-const { utGptStrategy } = require("./strategy/UTGPTStrategy");
-const { oneUToneSuperStrategy } = require("./strategy/oneUToneSuper");
 
 const app = express();
- 
+
+// ---- Log capture system ----
+const MAX_LOG_LINES = 500;
+const strategyLogs = [];
+
+function pushLog(buffer, line) {
+  buffer.push(line);
+  if (buffer.length > MAX_LOG_LINES) buffer.shift();
+}
+
+const _origLog = console.log;
+const _origError = console.error;
+
+console.log = (...args) => {
+  _origLog(...args);
+  const line = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  pushLog(strategyLogs, `[LOG] ${new Date().toLocaleTimeString()} ${line}`);
+};
+
+console.error = (...args) => {
+  _origError(...args);
+  const line = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+  pushLog(strategyLogs, `[ERR] ${new Date().toLocaleTimeString()} ${line}`);
+};
+
 app.use(express.json());
 
 const allowedOrigins = [
@@ -127,7 +151,7 @@ app.post("/evaluate", (req, res) => {
     candleHistoryBySymbol[symbol] = normalizedHistory;
     historyLoadedBySymbol[symbol] = true;
 
-    const result = utGptStrategy(candleHistoryBySymbol[symbol]);
+    const result = utGptStrategy2(candleHistoryBySymbol[symbol]);
     const lastCandle =
       candleHistoryBySymbol[symbol][candleHistoryBySymbol[symbol].length - 1];
 
@@ -193,7 +217,7 @@ app.post("/evaluate", (req, res) => {
 
   symbolCandles.push(normalizedCandle);
 
-  const result = utGptStrategy(symbolCandles);
+  const result = utGptStrategy2(symbolCandles);
 
   const currentEval = {
     symbol,
@@ -226,6 +250,10 @@ app.post("/evaluate", (req, res) => {
 
   // POST response always returns the actual per-candle evaluation (for fake-candles console)
   res.json(currentEval);
+});
+
+app.get("/logs/strategy", (req, res) => {
+  res.json({ logs: strategyLogs });
 });
 
 app.post("/reset-engine", (req, res) => {
