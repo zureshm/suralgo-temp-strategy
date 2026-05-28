@@ -14,6 +14,8 @@ const { utGptStrategy3 } = require("./strategy/UTGPTStrategy3");
 const { superDoubleUT } = require("./strategy/superDoubleUT");
 const { superUTBotStrategy } = require("./strategy/superUTBotStrategy");
 const { doubleUTBotStrategy } = require("./strategy/doubleUTBotStrategy");
+const { sumeshStrategy } = require("./strategy/SumeshStrategy");
+const { utGptStrategy4 } = require("./strategy/UTGPTStrategy4");
 
 const app = express();
 
@@ -154,7 +156,7 @@ app.post("/evaluate", (req, res) => {
     candleHistoryBySymbol[symbol] = normalizedHistory;
     historyLoadedBySymbol[symbol] = true;
 
-    const result = utGptStrategy3(candleHistoryBySymbol[symbol]);
+    const result = utGptStrategy4(candleHistoryBySymbol[symbol]);
     const lastCandle =
       candleHistoryBySymbol[symbol][candleHistoryBySymbol[symbol].length - 1];
 
@@ -220,7 +222,7 @@ app.post("/evaluate", (req, res) => {
 
   symbolCandles.push(normalizedCandle);
 
-  const result = utGptStrategy3(symbolCandles);
+  const result = utGptStrategy4(symbolCandles);
 
   const currentEval = {
     symbol,
