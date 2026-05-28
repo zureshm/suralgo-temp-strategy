@@ -12,7 +12,7 @@
 //   2) Green flips bullish + Blue already bullish + ST(10,4) bullish.
 //      (Also covers: Blue & Green flip same candle + ST(10,4) bullish)
 //   3) Cyan flips bullish + Blue already bullish + ST(10,4) bullish.
-//   4) chatGpt triggers bullish + ST(10,3) already bullish.
+//   4) chatGpt triggers bullish + Blue already bullish + ST(10,3) already bullish.
 //
 // SELL:
 //   Any UT Bot (Blue, Green, or Cyan) flips bearish → SELL immediately.
@@ -382,9 +382,9 @@ function utGptStrategy4(candles) {
     return makeResult("BUY", "Cyan flip (K3/ATR300) + Blue bullish + ST(10,4) bullish");
   }
 
-  // ── BUY Path 4: chatGpt triggers + ST(10,3) already bullish ──
-  if (st3Bullish && chatGptJustTriggered) {
-    return makeResult("BUY", "chatGpt trigger (EMA15>30) + ST(10,3) bullish");
+  // ── BUY Path 4: chatGpt triggers + Blue already bullish + ST(10,3) already bullish ──
+  if (ut1Bullish && st3Bullish && chatGptJustTriggered) {
+    return makeResult("BUY", "chatGpt trigger (EMA15>30) + Blue bullish + ST(10,3) bullish");
   }
 
   return makeResult("WAIT", "No signal");
