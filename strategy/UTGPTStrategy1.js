@@ -159,8 +159,8 @@ function computeUTBot1(candles) {
     }
 
     const prevPos = pos;
-    if (C[i - 1] < prevTS && C[i] > ts) pos = 1;
-    else if (C[i - 1] > prevTS && C[i] < ts) pos = -1;
+    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
+    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
 
     const buy = pos === 1 && prevPos !== 1;
     const sell = pos === -1 && prevPos !== -1;

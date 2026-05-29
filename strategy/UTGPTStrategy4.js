@@ -11,8 +11,8 @@
 //      EXCEPTION: Green and Blue both flip bullish on same candle + ST(10,4) bullish → BUY.
 //   2) Green flips bullish + Blue already bullish + ST(10,4) bullish.
 //      (Also covers: Blue & Green flip same candle + ST(10,4) bullish)
-//   3) Cyan flips bullish + Blue already bullish + ST(10,4) bullish.
-//   4) chatGpt triggers bullish + Blue already bullish + ST(10,3) already bullish.
+//   3) Cyan flips bullish + Blue already bullish + ST(10,4) or ST(10,3) bullish.
+//   4) chatGpt triggers bullish + Blue & Green already bullish + ST(10,3) already bullish.
 //
 // SELL:
 //   Any UT Bot (Blue, Green, or Cyan) flips bearish → SELL immediately.
@@ -164,8 +164,8 @@ function computeUTBot1(candles) {
     }
 
     const prevPos = pos;
-    if (C[i - 1] < prevTS && C[i] > ts) pos = 1;
-    else if (C[i - 1] > prevTS && C[i] < ts) pos = -1;
+    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
+    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
 
     const buy = pos === 1 && prevPos !== 1;
     const sell = pos === -1 && prevPos !== -1;
@@ -207,8 +207,8 @@ function computeUTBot2(candles) {
     }
 
     const prevPos = pos;
-    if (C[i - 1] < prevTS && C[i] > ts) pos = 1;
-    else if (C[i - 1] > prevTS && C[i] < ts) pos = -1;
+    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
+    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
 
     const buy = pos === 1 && prevPos !== 1;
     const sell = pos === -1 && prevPos !== -1;
@@ -250,8 +250,8 @@ function computeUTBot3(candles) {
     }
 
     const prevPos = pos;
-    if (C[i - 1] < prevTS && C[i] > ts) pos = 1;
-    else if (C[i - 1] > prevTS && C[i] < ts) pos = -1;
+    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
+    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
 
     const buy = pos === 1 && prevPos !== 1;
     const sell = pos === -1 && prevPos !== -1;
@@ -377,14 +377,15 @@ function utGptStrategy4(candles) {
     return makeResult("BUY", "Green flip (K2/ATR14) + Blue bullish + ST(10,4) bullish");
   }
 
-  // ── BUY Path 3: Cyan flips bullish + Blue already bullish + ST(10,4) bullish ──
-  if (st4Bullish && ut1Bullish && ut3.flippedBuy) {
-    return makeResult("BUY", "Cyan flip (K3/ATR300) + Blue bullish + ST(10,4) bullish");
+  // ── BUY Path 3: Cyan flips bullish + Blue already bullish + ST(10,4) or ST(10,3) bullish ──
+  if ((st4Bullish || st3Bullish) && ut1Bullish && ut3.flippedBuy) {
+    const stUsed = st4Bullish ? "ST(10,4)" : "ST(10,3)";
+    return makeResult("BUY", `Cyan flip (K3/ATR300) + Blue bullish + ${stUsed} bullish`);
   }
 
-  // ── BUY Path 4: chatGpt triggers + Blue already bullish + ST(10,3) already bullish ──
-  if (ut1Bullish && st3Bullish && chatGptJustTriggered) {
-    return makeResult("BUY", "chatGpt trigger (EMA15>30) + Blue bullish + ST(10,3) bullish");
+  // ── BUY Path 4: chatGpt triggers + Blue & Green already bullish + ST(10,3) already bullish ──
+  if (ut1Bullish && ut2Bullish && st3Bullish && chatGptJustTriggered) {
+    return makeResult("BUY", "chatGpt trigger (EMA15>30) + Blue & Green bullish + ST(10,3) bullish");
   }
 
   return makeResult("WAIT", "No signal");

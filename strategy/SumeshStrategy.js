@@ -121,8 +121,8 @@ function sumeshStrategy(candles) {
       }
 
       const prevPos = pos;
-      if (C[i - 1] < prevTS && C[i] > ts) pos = 1;
-      else if (C[i - 1] > prevTS && C[i] < ts) pos = -1;
+      if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
+      else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
 
       utFlippedBuy = pos === 1 && prevPos !== 1;
       utFlippedSell = pos === -1 && prevPos !== -1;
