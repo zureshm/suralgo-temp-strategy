@@ -8,7 +8,8 @@
 // BUY conditions:
 //   1) Blue flips bullish + ST(10,4) bullish.
 //      BUT NOT if Green was already bullish before Blue (previous candles).
-//      EXCEPTION: Green and Blue both flip bullish on same candle + ST(10,4) bullish → BUY.
+//      EXCEPTION 1: Green and Blue both flip bullish on same candle + ST(10,4) bullish → BUY.
+//      EXCEPTION 2: Cyan bullish (after Green) when Blue flips + ST(10,4) bullish → BUY.
 //   2) Green flips bullish + Blue already bullish + ST(10,4) bullish.
 //      (Also covers: Blue & Green flip same candle + ST(10,4) bullish)
 //   3) Cyan flips bullish + Blue already bullish + ST(10,4) or ST(10,3) bullish.
@@ -359,14 +360,16 @@ function utGptStrategy4(candles) {
 
   // ── BUY Path 1: Blue flips bullish + ST(10,4) bullish ──
   // NOT BUY if Green was already bullish before Blue (previous candles).
-  // EXCEPTION: Green and Blue both flip same candle → BUY.
+  // EXCEPTION 1: Green and Blue both flip same candle → BUY.
+  // EXCEPTION 2: Cyan bullish (after Green) when Blue flips → BUY.
   if (st4Bullish && ut1.flippedBuy) {
-    if (ut2Bullish && !ut2.flippedBuy) {
-      // Green was already bullish before Blue → NOT BUY (skip this path)
+    if (ut2Bullish && !ut2.flippedBuy && !ut3Bullish) {
+      // Green was already bullish before Blue AND Cyan not bullish → NOT BUY (skip)
     } else {
-      const reason = ut2.flippedBuy
-        ? "Blue + Green flip together (same candle) + ST(10,4) bullish"
-        : "Blue flip (K3/ATR20) + ST(10,4) bullish";
+      let reason;
+      if (ut2.flippedBuy) reason = "Blue + Green flip together (same candle) + ST(10,4) bullish";
+      else if (ut2Bullish && ut3Bullish) reason = "Blue flip + Cyan bullish (override Green pre-bullish) + ST(10,4) bullish";
+      else reason = "Blue flip (K3/ATR20) + ST(10,4) bullish";
       return makeResult("BUY", reason);
     }
   }
