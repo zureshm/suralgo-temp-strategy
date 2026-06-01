@@ -156,7 +156,7 @@ app.post("/evaluate", (req, res) => {
     candleHistoryBySymbol[symbol] = normalizedHistory;
     historyLoadedBySymbol[symbol] = true;
 
-    const result = utGptStrategy4(candleHistoryBySymbol[symbol]);
+    const result = sumeshStrategy(candleHistoryBySymbol[symbol]);
     const lastCandle =
       candleHistoryBySymbol[symbol][candleHistoryBySymbol[symbol].length - 1];
 
@@ -222,7 +222,7 @@ app.post("/evaluate", (req, res) => {
 
   symbolCandles.push(normalizedCandle);
 
-  const result = utGptStrategy4(symbolCandles);
+  const result = sumeshStrategy(symbolCandles);
 
   const currentEval = {
     symbol,
