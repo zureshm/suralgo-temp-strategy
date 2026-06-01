@@ -1,11 +1,8 @@
 // =============================================================================
-// UTGPTStrategy4 — UT Bot 1/Blue (K3/ATR20) + UT Bot 2/Green (K2/ATR14)
-//                 + UT Bot 3/Cyan (K3/ATR300)
-//                 + Supertrend(10,4) [for UT Bot conditions]
-//                 + Supertrend(10,3) [for chatGpt condition only]
-//                 + chatGpt EMA15/30
+// UTGPTStrategy4X — Same as UTGPTStrategy4 but SELL only on Blue flips bearish.
+//                   Green/Cyan bearish flips are IGNORED for exit.
 //
-// BUY conditions:
+// BUY conditions (same as UTGPTStrategy4):
 //   1) Blue flips bullish + ST(10,4) bullish.
 //      BUT NOT if Green was already bullish before Blue (previous candles).
 //      EXCEPTION 1: Green and Blue both flip bullish on same candle + ST(10,4) bullish → BUY.
@@ -16,7 +13,7 @@
 //   4) chatGpt triggers bullish + Blue & Green already bullish + ST(10,3) already bullish.
 //
 // SELL:
-//   Any UT Bot (Blue, Green, or Cyan) flips bearish → SELL immediately.
+//   ONLY Blue UT Bot flips bearish → SELL. Green/Cyan bearish ignored.
 // =============================================================================
 
 // ── chatGpt helpers ──────────────────────────────────────────────────────────
@@ -93,7 +90,7 @@ function atrSeries(H, L, C, period) {
   return rmaSeries(trueRangeSeries(H, L, C), period);
 }
 
-// ── Supertrend (ATR=10, Factor=3) ────────────────────────────────────────────
+// ── Supertrend ─────────────────────────────────────────────────────────────────
 
 function supertrendSeries(H, L, C, period, multiplier) {
   const atr = atrSeries(H, L, C, period);
@@ -268,7 +265,7 @@ function computeUTBot3(candles) {
 
 // ── Main strategy ────────────────────────────────────────────────────────────
 
-function utGptStrategy4(candles) {
+function utGptStrategy4X(candles) {
   if (!candles || candles.length < 310) {
     return { signal: "WAIT", ema10: null, ema20: null };
   }
@@ -349,13 +346,9 @@ function utGptStrategy4(candles) {
     supertrend3: st3Line[st3Line.length - 1]
   });
 
-  // ── SELL: Any UT Bot flips bearish ──
-  if (ut1.flippedSell || ut2.flippedSell || ut3.flippedSell) {
-    let reason = "UT Bot sell flip: ";
-    if (ut1.flippedSell) reason += "Blue (K3/ATR20)";
-    else if (ut2.flippedSell) reason += "Green (K2/ATR14)";
-    else reason += "Cyan (K3/ATR300)";
-    return makeResult("SELL", reason);
+  // ── SELL: ONLY Blue UT Bot flips bearish ──
+  if (ut1.flippedSell) {
+    return makeResult("SELL", "UT Bot sell flip: Blue (K3/ATR20)");
   }
 
   // ── BUY Path 1: Blue flips bullish + ST(10,4) bullish ──
@@ -394,4 +387,4 @@ function utGptStrategy4(candles) {
   return makeResult("WAIT", "No signal");
 }
 
-module.exports = { utGptStrategy4 };
+module.exports = { utGptStrategy4X };
