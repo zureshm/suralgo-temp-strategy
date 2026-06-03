@@ -71,6 +71,27 @@ app.use(cors({
 
 const PORT = 4000;
 
+// Strategy map
+const strategies = {
+  evaluateEMACross,
+  surStrategy,
+  chatGptStrategy,
+  claudSurStrategy,
+  utGptStrategy,
+  utGptStrategy1,
+  utGptStrategy2,
+  utGptStrategy3,
+  superDoubleUT,
+  superUTBotStrategy,
+  doubleUTBotStrategy,
+  sumeshStrategy,
+  utGptStrategy4,
+  utGptStrategy4X
+};
+
+// Active strategy (default)
+let activeStrategy = "utGptStrategy4X";
+
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};
 // keeps track of whether history was already loaded for a symbol
@@ -92,6 +113,7 @@ app.get("/evaluate", (req, res) => {
     return res.json({
       message: "Strategy engine running",
       engineStatus: "running",
+      activeStrategy
     });
   }
 
@@ -109,12 +131,14 @@ app.get("/evaluate", (req, res) => {
       lastCandleTime: null,
       engineStatus: "no-data",
       candles: [],
+      activeStrategy
     });
   }
 
   return res.json({
     ...latestEvaluation,
     candles: candles.slice(-5),
+    activeStrategy
   });
 });
 
@@ -134,6 +158,13 @@ app.post("/evaluate", (req, res) => {
   }
 
   const symbolCandles = candleHistoryBySymbol[symbol];
+  const strategyFn = strategies[activeStrategy];
+
+  if (!strategyFn) {
+    return res.status(400).json({
+      message: `Invalid strategy: ${activeStrategy}`,
+    });
+  }
 
   // HISTORY PRELOAD MODE
   if (mode === "history") {
@@ -157,7 +188,7 @@ app.post("/evaluate", (req, res) => {
     candleHistoryBySymbol[symbol] = normalizedHistory;
     historyLoadedBySymbol[symbol] = true;
 
-    const result = utGptStrategy4X(candleHistoryBySymbol[symbol]);
+    const result = strategyFn(candleHistoryBySymbol[symbol]);
     const lastCandle =
       candleHistoryBySymbol[symbol][candleHistoryBySymbol[symbol].length - 1];
 
@@ -168,11 +199,13 @@ app.post("/evaluate", (req, res) => {
       candleCount: candleHistoryBySymbol[symbol].length,
       lastCandleTime: lastCandle ? lastCandle.time : null,
       engineStatus: "history-loaded",
+      activeStrategy
     };
 
     console.log("History loaded for:", symbol);
     console.log("History candle count:", candleHistoryBySymbol[symbol].length);
     console.log("Strategy result:", latestEvaluationBySymbol[symbol]);
+    console.log("Active strategy:", activeStrategy);
 
     return res.json(latestEvaluationBySymbol[symbol]);
   }
@@ -209,6 +242,7 @@ app.post("/evaluate", (req, res) => {
         lastCandleTime: candle.time,
       }),
       engineStatus: "duplicate-candle",
+      activeStrategy
     });
   }
 
@@ -223,7 +257,7 @@ app.post("/evaluate", (req, res) => {
 
   symbolCandles.push(normalizedCandle);
 
-  const result = utGptStrategy4X(symbolCandles);
+  const result = strategyFn(symbolCandles);
 
   const currentEval = {
     symbol,
@@ -232,6 +266,7 @@ app.post("/evaluate", (req, res) => {
     candleCount: symbolCandles.length,
     lastCandleTime: normalizedCandle.time,
     engineStatus: historyLoadedBySymbol[symbol] ? "running" : "running-no-history",
+    activeStrategy
   };
 
   // Sticky signal: don't let WAIT overwrite a previous BUY/SELL immediately,
@@ -253,6 +288,7 @@ app.post("/evaluate", (req, res) => {
   console.log("Stored signal:", latestEvaluationBySymbol[symbol].signal,
     "| Current eval:", result.signal);
   console.log("Strategy result:", latestEvaluationBySymbol[symbol]);
+  console.log("Active strategy:", activeStrategy);
 
   // POST response always returns the actual per-candle evaluation (for fake-candles console)
   res.json(currentEval);
@@ -260,6 +296,40 @@ app.post("/evaluate", (req, res) => {
 
 app.get("/logs/strategy", (req, res) => {
   res.json({ logs: strategyLogs });
+});
+
+app.post("/strategy", (req, res) => {
+  const { strategy } = req.body;
+
+  if (!strategy) {
+    return res.status(400).json({
+      message: "strategy name is required",
+      availableStrategies: Object.keys(strategies)
+    });
+  }
+
+  if (!strategies[strategy]) {
+    return res.status(400).json({
+      message: `Invalid strategy: ${strategy}`,
+      availableStrategies: Object.keys(strategies)
+    });
+  }
+
+  activeStrategy = strategy;
+  console.log("Strategy switched to:", activeStrategy);
+
+  return res.json({
+    message: "Strategy switched successfully",
+    activeStrategy,
+    availableStrategies: Object.keys(strategies)
+  });
+});
+
+app.get("/strategy", (req, res) => {
+  return res.json({
+    activeStrategy,
+    availableStrategies: Object.keys(strategies)
+  });
 });
 
 app.post("/reset-engine", (req, res) => {
@@ -278,4 +348,5 @@ app.post("/reset-engine", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Strategy engine running on port ${PORT}`);
+  console.log(`Active strategy: ${activeStrategy}`);
 });
