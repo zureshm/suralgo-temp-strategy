@@ -298,7 +298,6 @@ app.get("/logs/strategy", (req, res) => {
   res.json({ logs: strategyLogs });
 });
 
-<<<<<<< HEAD
 // Chart history endpoint - returns last 60 OHLC candles per symbol for charting
 app.get("/chart-history", (req, res) => {
   const result = {};
@@ -312,7 +311,8 @@ app.get("/chart-history", (req, res) => {
     }));
   }
   return res.json(result);
-=======
+});
+
 app.post("/strategy", (req, res) => {
   const { strategy } = req.body;
 
@@ -345,7 +345,6 @@ app.get("/strategy", (req, res) => {
     activeStrategy,
     availableStrategies: Object.keys(strategies)
   });
->>>>>>> a1b24f03da951ee8d899954d4a661f39776ca3d8
 });
 
 app.post("/reset-engine", (req, res) => {
