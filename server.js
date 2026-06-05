@@ -298,39 +298,6 @@ app.get("/logs/strategy", (req, res) => {
   res.json({ logs: strategyLogs });
 });
 
-// Chart history endpoint - returns OHLC candles for charting
-app.get("/chart-history", (req, res) => {
-  const symbol = req.query.symbol;
-
-  // If specific symbol requested
-  if (symbol) {
-    const candles = candleHistoryBySymbol[symbol] || [];
-    return res.json({
-      symbol,
-      candles: candles.slice(-60).map(c => ({
-        time: c.time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      })),
-    });
-  }
-
-  // Return all symbols
-  const result = {};
-  for (const sym of Object.keys(candleHistoryBySymbol)) {
-    result[sym] = candleHistoryBySymbol[sym].slice(-60).map(c => ({
-      time: c.time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
-  }
-  return res.json(result);
-});
-
 app.post("/strategy", (req, res) => {
   const { strategy } = req.body;
 
