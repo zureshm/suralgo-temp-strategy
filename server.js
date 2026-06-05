@@ -262,6 +262,21 @@ app.get("/logs/strategy", (req, res) => {
   res.json({ logs: strategyLogs });
 });
 
+// Chart history endpoint - returns last 60 OHLC candles per symbol for charting
+app.get("/chart-history", (req, res) => {
+  const result = {};
+  for (const sym of Object.keys(candleHistoryBySymbol)) {
+    result[sym] = candleHistoryBySymbol[sym].slice(-60).map(c => ({
+      time: c.time,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+  }
+  return res.json(result);
+});
+
 app.post("/reset-engine", (req, res) => {
   // Clear all symbols from candle history
   for (const symbol in candleHistoryBySymbol) {
