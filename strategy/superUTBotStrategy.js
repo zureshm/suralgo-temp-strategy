@@ -1,7 +1,8 @@
 // =============================================================================
-// SuperUTBotStrategy — UT Bot 2 (fast) + UT Bot 2 (slow) + Supertrend
-// BUY:  Supertrend bullish + UT Bot 1 (ATR=1) BUY signal
-// SELL: UT Bot 1 (ATR=1) OR UT Bot 2 (ATR=300) SELL signal (whichever first)
+// SuperUTBotStrategy — UT Bot (Key=2, ATR=1) + UT Bot (Key=2, ATR=300) + Supertrend(10,3)
+//
+// BUY:  Supertrend(10,3) bullish + UT Bot (Key=2, ATR=1) BUY signal.
+// SELL: UT Bot (Key=2, ATR=1) OR UT Bot (Key=2, ATR=300) SELL signal (whichever first).
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────

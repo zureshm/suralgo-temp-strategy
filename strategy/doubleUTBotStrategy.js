@@ -1,10 +1,9 @@
 // =============================================================================
-// DoubleUTBotStrategy — 2x UT Bot 2 + Supertrend
-// UT Bot 1: Key=2, ATR=1   (fast)
-// UT Bot 2: Key=2, ATR=300  (slow)
-// BUY:  Supertrend bullish + close > VWAP + (UT Bot 1 BUY OR UT Bot 2 BUY)
-// SELL: UT Bot 1 OR UT Bot 2 SELL signal (whichever first)
-// VWAP: Calculated from volume data; if volume unavailable, VWAP = 0 (gate bypassed)
+// DoubleUTBotStrategy — UT Bot (Key=2, ATR=1) + UT Bot (Key=2, ATR=300) + Supertrend(10,3) + VWAP
+//
+// BUY:  Supertrend(10,3) bullish + close > VWAP + (UT Bot 1 BUY OR UT Bot 2 BUY).
+// SELL: UT Bot 1 OR UT Bot 2 SELL signal (whichever first).
+// VWAP: Calculated from volume data; if volume unavailable, VWAP = 0 (gate bypassed).
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────

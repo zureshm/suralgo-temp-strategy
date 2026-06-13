@@ -298,11 +298,11 @@ app.get("/logs/strategy", (req, res) => {
   res.json({ logs: strategyLogs });
 });
 
-// Chart history endpoint - returns last 60 OHLC candles per symbol for charting
+// Chart history endpoint - returns last 700 OHLC candles per symbol for charting
 app.get("/chart-history", (req, res) => {
   const result = {};
   for (const sym of Object.keys(candleHistoryBySymbol)) {
-    result[sym] = candleHistoryBySymbol[sym].slice(-60).map(c => ({
+    result[sym] = candleHistoryBySymbol[sym].slice(-700).map(c => ({
       time: c.time,
       open: c.open,
       high: c.high,
