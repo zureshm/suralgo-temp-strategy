@@ -2,6 +2,14 @@
 // UTGPTStrategy4X — Same as UTGPTStrategy4 but SELL only on Blue flips bearish.
 //                   Green/Cyan bearish flips are IGNORED for exit.
 //
+// UTBOT PARAMETERS (Color Legend):
+//   - BLUE  = UT Bot 1: Key Value = 3, ATR Period = 20
+//   - GREEN = UT Bot 2: Key Value = 2, ATR Period = 14
+//   - CYAN  = UT Bot 3: Key Value = 3, ATR Period = 300
+//
+// Supertrend: ST(10,4) for UT Bot conditions, ST(10,3) for chatGpt condition
+// chatGpt: EMA15/30
+//
 // BUY conditions (same as UTGPTStrategy4):
 //   1) Blue flips bullish + ST(10,4) bullish.
 //      BUT NOT if Green was already bullish before Blue (previous candles).

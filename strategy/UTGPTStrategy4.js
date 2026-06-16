@@ -1,9 +1,13 @@
 // =============================================================================
-// UTGPTStrategy4 — UT Bot 1/Blue (K3/ATR20) + UT Bot 2/Green (K2/ATR14)
-//                 + UT Bot 3/Cyan (K3/ATR300)
-//                 + Supertrend(10,4) [for UT Bot conditions]
-//                 + Supertrend(10,3) [for chatGpt condition only]
-//                 + chatGpt EMA15/30
+// UTGPTStrategy4 — Three UTBOT instances with Supertrend + chatGpt EMA
+//
+// UTBOT PARAMETERS (Color Legend):
+//   - BLUE  = UT Bot 1: Key Value = 3, ATR Period = 20
+//   - GREEN = UT Bot 2: Key Value = 2, ATR Period = 14
+//   - CYAN  = UT Bot 3: Key Value = 3, ATR Period = 300
+//
+// Supertrend: ST(10,4) for UT Bot conditions, ST(10,3) for chatGpt condition
+// chatGpt: EMA15/30
 //
 // BUY conditions:
 //   1) Blue flips bullish + ST(10,4) bullish.
