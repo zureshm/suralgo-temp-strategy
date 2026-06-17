@@ -1,8 +1,16 @@
 // =============================================================================
-// SuperUTBotStrategy — UT Bot (Key=2, ATR=1) + UT Bot (Key=2, ATR=300) + Supertrend(10,3)
+// SuperUTBotStrategy — Supertrend + Dual UTBOT Strategy
 //
-// BUY:  Supertrend(10,3) bullish + UT Bot (Key=2, ATR=1) BUY signal.
-// SELL: UT Bot (Key=2, ATR=1) OR UT Bot (Key=2, ATR=300) SELL signal (whichever first).
+// INDICATORS & CONFIGURATION:
+//   - Supertrend: Period = 10, Multiplier = 3
+//   - UT Bot 1:   Key Value = 2, ATR Period = 1
+//   - UT Bot 2:   Key Value = 2, ATR Period = 300
+//
+// BUY CONDITIONS:
+//   Supertrend bullish + UT Bot 1 flips bullish.
+//
+// SELL CONDITIONS:
+//   UT Bot 1 OR UT Bot 2 flips bearish (whichever occurs first).
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────

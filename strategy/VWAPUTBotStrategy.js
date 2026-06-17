@@ -1,9 +1,17 @@
 // =============================================================================
-// DoubleUTBotStrategy — UT Bot (Key=2, ATR=1) + UT Bot (Key=2, ATR=300) + Supertrend(10,3) + VWAP
+// VWAPUTBotStrategy — Supertrend + VWAP + Dual UTBOT Strategy
 //
-// BUY:  Supertrend(10,3) bullish + close > VWAP + (UT Bot 1 BUY OR UT Bot 2 BUY).
-// SELL: UT Bot 1 OR UT Bot 2 SELL signal (whichever first).
-// VWAP: Calculated from volume data; if volume unavailable, VWAP = 0 (gate bypassed).
+// INDICATORS & CONFIGURATION:
+//   - Supertrend: Period = 10, Multiplier = 3
+//   - VWAP:       Calculated from candle volume; bypassed if volume unavailable
+//   - UT Bot 1:   Key Value = 2, ATR Period = 1
+//   - UT Bot 2:   Key Value = 2, ATR Period = 300
+//
+// BUY CONDITIONS:
+//   Supertrend bullish + Close > VWAP + (UT Bot 1 OR UT Bot 2 flips bullish).
+//
+// SELL CONDITIONS:
+//   UT Bot 1 OR UT Bot 2 flips bearish (whichever occurs first).
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -75,7 +83,7 @@ function supertrendSeries(H, L, C, period, multiplier) {
 
 // ── Main strategy engine ────────────────────────────────────────────────────
 
-function doubleUTBotStrategy(candles) {
+function VWAPUTBotStrategy(candles) {
   if (!candles || candles.length < 35) {
     return { signal: "WAIT", trade: null, reason: "Not enough data" };
   }
@@ -198,4 +206,4 @@ function doubleUTBotStrategy(candles) {
   };
 }
 
-module.exports = { doubleUTBotStrategy };
+module.exports = { VWAPUTBotStrategy };
