@@ -1,14 +1,18 @@
 // =============================================================================
-// SuperDoubleUT — Supertrend + Dual UTBOT Strategy
+// SuperDoubleUT — Supertrend + Triple UTBOT Strategy
 //
 // INDICATORS & CONFIGURATION:
 //   - Supertrend: Period = 10, Multiplier = 3
-//   - UT Bot 1:   Key Value = 4, ATR Period = 10
-//   - UT Bot 2:   Key Value = 2, ATR Period = 300
+//   - UT Bot 1:   Key Value = 4, ATR Period = 10   (entry trigger)
+//   - UT Bot 2:   Key Value = 2, ATR Period = 300  (entry trigger / exit)
+//   - UT Bot 3:   Key Value = 2, ATR Period = 10   (BUY BLOCKER — not for entry)
 //
-// BUY CONDITIONS:
+// BUY CONDITIONS (BOTH also require UT Bot 3 bullish):
 //   1) Supertrend bullish + UT Bot 1 flips bullish.
 //   2) Supertrend already bullish + UT Bot 1 already bullish + UT Bot 2 flips bullish.
+//
+// BUY BLOCKER:
+//   UT Bot 3 (K2/ATR10) bearish → overrides and prevents ALL BUY signals.
 //
 // SELL CONDITIONS:
 //   UT Bot 2 flips bearish.
@@ -196,6 +200,8 @@ function superDoubleUT(candles) {
   let ts1 = 0, pos1 = 0;
   // UT Bot 2 state (Key=2, ATR=300)
   let ts2 = 0, pos2 = 0;
+  // UT Bot 3 state (Key=2, ATR=10) — BUY blocker only
+  let ts3 = 0, pos3 = 0;
 
   let inPosition = false;
   let lastSignal = "WAIT", lastReason = "No signal";
@@ -253,13 +259,34 @@ function superDoubleUT(candles) {
       ut2FlippedSell = pos2 === -1 && prevPos2 !== -1;
     }
 
+    // UT Bot 3 (Key=2, ATR=10) — BUY blocker only
+    if (atr10[i] != null) {
+      const nLoss3 = 2 * atr10[i];
+      const prevTS3 = ts3;
+
+      if (C[i] > prevTS3 && C[i - 1] > prevTS3) {
+        ts3 = Math.max(prevTS3, C[i] - nLoss3);
+      } else if (C[i] < prevTS3 && C[i - 1] < prevTS3) {
+        ts3 = Math.min(prevTS3, C[i] + nLoss3);
+      } else if (C[i] > prevTS3) {
+        ts3 = C[i] - nLoss3;
+      } else {
+        ts3 = C[i] + nLoss3;
+      }
+
+      const prevPos3 = pos3;
+      if (C[i - 1] < prevTS3 && C[i] > ts3) pos3 = 1;
+      else if (C[i - 1] > prevTS3 && C[i] < ts3) pos3 = -1;
+    }
+
     const ut1Bullish = pos1 === 1;
     const ut2Bullish = pos2 === 1;
+    const ut3Bullish = pos3 === 1; // BUY blocker: must be bullish to allow BUY
 
     let sig = "WAIT", reason = "No signal";
 
     // ── BUY Case 1: Supertrend bullish + UT Bot 1 flips bullish ──
-    if (!inPosition && stBullish && ut1FlippedBuy) {
+    if (!inPosition && stBullish && ut1FlippedBuy && ut3Bullish) {
       inPosition = true;
       sig = "BUY";
       reason = stFlippedBuy
@@ -275,7 +302,7 @@ function superDoubleUT(candles) {
     }
 
     // ── BUY Case 2: ST already bullish + UT Bot 1 already bullish + UT Bot 2 bullish ──
-    else if (!inPosition && stBullish && ut1Bullish && ut2Bullish) {
+    else if (!inPosition && stBullish && ut1Bullish && ut2Bullish && ut3Bullish) {
       inPosition = true;
       sig = "BUY";
       reason = "ST bullish + UT Bot 1 bullish (K4/ATR10) + UT Bot 2 bullish (K2/ATR300)";
@@ -292,6 +319,8 @@ function superDoubleUT(candles) {
     utBot1Trail: ts1,
     utBot2Pos: pos2,
     utBot2Trail: ts2,
+    utBot3Pos: pos3,
+    utBot3Trail: ts3,
     stDirection: stDir[N - 1],
     supertrend: stLine[N - 1],
     close: C[N - 1]
