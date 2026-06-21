@@ -44,7 +44,7 @@ console.error = (...args) => {
   pushLog(strategyLogs, `[ERR] ${new Date().toLocaleTimeString()} ${line}`);
 };
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 const allowedOrigins = [
   "http://localhost:3000",

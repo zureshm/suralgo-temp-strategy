@@ -1,17 +1,31 @@
 // =============================================================================
-// VWAPUTBotStrategy — Supertrend + VWAP + Dual UTBOT Strategy
+// VWAPUTBotStrategy — Quad UTBOT Confluence Strategy
+//
+// Based on claudSurStrategy (same standard TradingView UT Bot), with one extra
+// UT Bot (PURPLE). All four bots must be bullish together to BUY.
 //
 // INDICATORS & CONFIGURATION:
-//   - Supertrend: Period = 10, Multiplier = 3
-//   - VWAP:       Calculated from candle volume; bypassed if volume unavailable
-//   - UT Bot 1:   Key Value = 2, ATR Period = 1
-//   - UT Bot 2:   Key Value = 2, ATR Period = 300
+//   - CYAN   (UT Bot 1): Key Value = 4, ATR Period = 1000
+//   - GREEN  (UT Bot 2): Key Value = 4, ATR Period = 10
+//   - BLUE   (UT Bot 3): Key Value = 3, ATR Period = 10
+//   - PURPLE (UT Bot 4): Key Value = 5, ATR Period = 40
 //
-// BUY CONDITIONS:
-//   Supertrend bullish + Close > VWAP + (UT Bot 1 OR UT Bot 2 flips bullish).
+// NOTE ON ATR + SHORT INTRADAY HISTORY:
+//   Uses ONLY the available candles (no padding). ATR is an expanding average of
+//   true range until `period` samples exist, then switches to Wilder RMA. So
+//   CYAN's ATR Period = 1000 is defined and evolves across a ~350-candle session
+//   (it just behaves as the running average true range over all bars so far).
+//
+// BUY CONDITIONS (any one fires BUY; same-candle flips also qualify):
+//   1) CYAN flips bullish   + GREEN & BLUE & PURPLE already bullish.
+//   2) GREEN flips bullish  + CYAN & BLUE & PURPLE already bullish.
+//   3) BLUE flips bullish   + CYAN & GREEN & PURPLE already bullish.
+//   4) PURPLE flips bullish + CYAN & GREEN & BLUE already bullish.
+//   (Net effect: all four must be bullish together, and at least one flipped
+//    bullish on the current candle.)
 //
 // SELL CONDITIONS:
-//   UT Bot 1 OR UT Bot 2 flips bearish (whichever occurs first).
+//   CYAN OR GREEN flips bearish → SELL (whichever occurs first).
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -25,183 +39,141 @@ function trueRangeSeries(H, L, C) {
   return tr;
 }
 
+// ATR base: expanding simple average of true range until `period` samples
+// exist, then Wilder RMA. Defined from the first bar, so large periods (e.g.
+// 1000) still produce a usable, evolving value on short histories (~350 bars).
 function rmaSeries(src, period) {
   const out = new Array(src.length).fill(null);
-  if (src.length < period) return out;
-  let s = 0;
-  for (let i = 0; i < period; i++) s += src[i];
-  out[period - 1] = s / period;
-  for (let i = period; i < src.length; i++) out[i] = (out[i - 1] * (period - 1) + src[i]) / period;
+  if (!src.length) return out;
+  let sum = 0;
+  for (let i = 0; i < src.length; i++) {
+    if (i < period) {
+      // Expanding simple average until we have `period` samples.
+      sum += src[i];
+      out[i] = sum / (i + 1);
+    } else {
+      // Standard Wilder RMA once enough samples exist.
+      out[i] = (out[i - 1] * (period - 1) + src[i]) / period;
+    }
+  }
   return out;
 }
 
 function atrSeries(H, L, C, period) { return rmaSeries(trueRangeSeries(H, L, C), period); }
 
-// ── Supertrend (faithful Pine Script conversion) ────────────────────────────
+// ── Standard UT Bot (ATR trailing stop) ──────────────────────────────────────
+// Returns per-candle position series (1 = bullish, -1 = bearish) and the
+// trailing stop series. Identical logic to the UT Bot used in our other scripts.
 
-function supertrendSeries(H, L, C, period, multiplier) {
-  const atr = atrSeries(H, L, C, period);
-  const len = C.length;
-  const st = new Array(len).fill(null);
-  const dir = new Array(len).fill(0);
-  const up = new Array(len).fill(null);
-  const dn = new Array(len).fill(null);
+function utBotSeries(H, L, C, keyValue, atrPeriod) {
+  const N = C.length;
+  const atr = atrSeries(H, L, C, atrPeriod);
+  const posArr = new Array(N).fill(0);
+  const tsArr = new Array(N).fill(null);
 
-  for (let i = 0; i < len; i++) {
-    if (atr[i] == null) continue;
-    const hl2 = (H[i] + L[i]) / 2;
-    const rawUp = hl2 - multiplier * atr[i];
-    const rawDn = hl2 + multiplier * atr[i];
+  let ts = 0, pos = 0;
+  for (let i = 1; i < N; i++) {
+    if (atr[i] == null) { posArr[i] = pos; tsArr[i] = ts; continue; }
+    const nLoss = keyValue * atr[i];
+    const prevTS = ts;
 
-    if (i > 0 && up[i - 1] != null && C[i - 1] > up[i - 1]) {
-      up[i] = Math.max(rawUp, up[i - 1]);
+    if (C[i] > prevTS && C[i - 1] > prevTS) {
+      ts = Math.max(prevTS, C[i] - nLoss);
+    } else if (C[i] < prevTS && C[i - 1] < prevTS) {
+      ts = Math.min(prevTS, C[i] + nLoss);
+    } else if (C[i] > prevTS) {
+      ts = C[i] - nLoss;
     } else {
-      up[i] = rawUp;
+      ts = C[i] + nLoss;
     }
 
-    if (i > 0 && dn[i - 1] != null && C[i - 1] < dn[i - 1]) {
-      dn[i] = Math.min(rawDn, dn[i - 1]);
-    } else {
-      dn[i] = rawDn;
-    }
+    // Canonical UT Bot crossover (uses the PREVIOUS trailing stop on both sides)
+    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
+    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
 
-    if (i === 0 || dir[i - 1] === 0) {
-      dir[i] = C[i] > dn[i] ? 1 : -1;
-    } else if (dir[i - 1] === -1 && C[i] > dn[i - 1]) {
-      dir[i] = 1;
-    } else if (dir[i - 1] === 1 && C[i] < up[i - 1]) {
-      dir[i] = -1;
-    } else {
-      dir[i] = dir[i - 1];
-    }
-
-    st[i] = dir[i] === 1 ? up[i] : dn[i];
+    posArr[i] = pos;
+    tsArr[i] = ts;
   }
 
-  return { supertrend: st, direction: dir };
+  return { pos: posArr, trail: tsArr };
 }
 
-// ── Main strategy engine ────────────────────────────────────────────────────
+// ── Main strategy ─────────────────────────────────────────────────────────────
 
 function VWAPUTBotStrategy(candles) {
-  if (!candles || candles.length < 35) {
-    return { signal: "WAIT", trade: null, reason: "Not enough data" };
+  // Require only ~100 real candles.
+  if (!candles || candles.length < 100) {
+    return { signal: "WAIT", reason: "Not enough data (need 100+)" };
   }
 
-  const O = candles.map(c => Number(c.open));
   const H = candles.map(c => Number(c.high));
   const L = candles.map(c => Number(c.low));
   const C = candles.map(c => Number(c.close));
-  const V = candles.map(c => Number(c.volume * 0) || 0);
   const N = C.length;
 
-  // ── VWAP: cumulative(typicalPrice * volume) / cumulative(volume) ──
-  const vwap = new Array(N).fill(0);
-  let cumTPV = 0, cumVol = 0;
-  for (let i = 0; i < N; i++) {
-    const tp = (H[i] + L[i] + C[i]) / 3;
-    cumTPV += tp * V[i];
-    cumVol += V[i];
-    vwap[i] = cumVol > 0 ? cumTPV / cumVol : 0;
-  }
+  // Four UT Bots
+  const cyan   = utBotSeries(H, L, C, 4, 1000); // CYAN   (Key=4, ATR=1000)
+  const green  = utBotSeries(H, L, C, 4, 10);   // GREEN  (Key=4, ATR=10)
+  const blue   = utBotSeries(H, L, C, 3, 10);   // BLUE   (Key=3, ATR=10)
+  const purple = utBotSeries(H, L, C, 5, 40);   // PURPLE (Key=5, ATR=40)
 
-  // ATR series for both UT Bots
-  const atr1   = atrSeries(H, L, C, 1);   // fast
-  const atr300 = atrSeries(H, L, C, 300); // slow
-
-  // Supertrend (ATR Length 10, Factor 3)
-  const { supertrend: stLine, direction: stDir } = supertrendSeries(H, L, C, 10, 3);
-
-  // ── UT Bot state ──
-  let ts1 = 0, pos1 = 0;  // UT Bot 1 (Key=2, ATR=1)
-  let ts2 = 0, pos2 = 0;  // UT Bot 2 (Key=2, ATR=300)
   let inPosition = false;
-
-  let lastSignal = "WAIT", lastTrade = null, lastReason = "No signal";
+  let lastSignal = "WAIT", lastReason = "No signal";
 
   for (let i = 1; i < N; i++) {
-    let sig = "WAIT", trade = null, reason = "No signal";
+    const cyanBull   = cyan.pos[i] === 1;
+    const greenBull  = green.pos[i] === 1;
+    const blueBull   = blue.pos[i] === 1;
+    const purpleBull = purple.pos[i] === 1;
 
-    // ── UT Bot 1 (Key=2, ATR=1) — faithful Pine UT Bot 2 logic ──
-    let buy1 = false, sell1 = false;
-    if (atr1[i] != null) {
-      const nLoss1 = 2 * atr1[i];
-      const prevTS1 = ts1;
+    const cyanFlipBuy   = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
+    const greenFlipBuy  = green.pos[i] === 1 && green.pos[i - 1] !== 1;
+    const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
+    const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
 
-      if (C[i] > prevTS1 && C[i - 1] > prevTS1) {
-        ts1 = Math.max(prevTS1, C[i] - nLoss1);
-      } else if (C[i] < prevTS1 && C[i - 1] < prevTS1) {
-        ts1 = Math.min(prevTS1, C[i] + nLoss1);
-      } else if (C[i] > prevTS1) {
-        ts1 = C[i] - nLoss1;
-      } else {
-        ts1 = C[i] + nLoss1;
-      }
+    const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
+    const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
 
-      const prevPos1 = pos1;
-      if (C[i - 1] < prevTS1 && C[i] > ts1) pos1 = 1;
-      else if (C[i - 1] > prevTS1 && C[i] < ts1) pos1 = -1;
+    let sig = "WAIT", reason = "No signal";
 
-      buy1  = pos1 === 1  && prevPos1 !== 1;
-      sell1 = pos1 === -1 && prevPos1 !== -1;
-    }
+    // ── BUY: all four bullish together AND at least one flipped bullish now ──
+    const buy1 = cyanFlipBuy   && greenBull && blueBull   && purpleBull; // CYAN trigger
+    const buy2 = greenFlipBuy  && cyanBull  && blueBull   && purpleBull; // GREEN trigger
+    const buy3 = blueFlipBuy   && cyanBull  && greenBull  && purpleBull; // BLUE trigger
+    const buy4 = purpleFlipBuy && cyanBull  && greenBull  && blueBull;   // PURPLE trigger
 
-    // ── UT Bot 2 (Key=2, ATR=300) — faithful Pine UT Bot 2 logic ──
-    let buy2 = false, sell2 = false;
-    if (atr300[i] != null) {
-      const nLoss2 = 2 * atr300[i];
-      const prevTS2 = ts2;
-
-      if (C[i] > prevTS2 && C[i - 1] > prevTS2) {
-        ts2 = Math.max(prevTS2, C[i] - nLoss2);
-      } else if (C[i] < prevTS2 && C[i - 1] < prevTS2) {
-        ts2 = Math.min(prevTS2, C[i] + nLoss2);
-      } else if (C[i] > prevTS2) {
-        ts2 = C[i] - nLoss2;
-      } else {
-        ts2 = C[i] + nLoss2;
-      }
-
-      const prevPos2 = pos2;
-      if (C[i - 1] < prevTS2 && C[i] > ts2) pos2 = 1;
-      else if (C[i - 1] > prevTS2 && C[i] < ts2) pos2 = -1;
-
-      buy2  = pos2 === 1  && prevPos2 !== 1;
-      sell2 = pos2 === -1 && prevPos2 !== -1;
-    }
-
-    // ── Supertrend direction ──
-    const stBullish = stDir[i] === 1;
-
-    // ── VWAP gate: close must be above VWAP (if VWAP is 0, gate is bypassed) ──
-    const aboveVwap = vwap[i] === 0 || C[i] > vwap[i];
-
-    // ── BUY: Supertrend bullish + close > VWAP + (UT Bot 1 OR UT Bot 2) BUY signal ──
-    if (!inPosition && stBullish && aboveVwap && (buy1 || buy2)) {
+    if (!inPosition && (buy1 || buy2 || buy3 || buy4)) {
       inPosition = true;
-      sig = "BUY"; trade = "ENTRY";
-      reason = buy1 ? "UT Bot 1 buy + ST bullish + above VWAP" : "UT Bot 2 buy + ST bullish + above VWAP";
+      sig = "BUY";
+      if (buy1) reason = "CYAN flip bullish (K4/ATR1000) + GREEN & BLUE & PURPLE bullish";
+      else if (buy2) reason = "GREEN flip bullish (K4/ATR10) + CYAN & BLUE & PURPLE bullish";
+      else if (buy3) reason = "BLUE flip bullish (K3/ATR10) + CYAN & GREEN & PURPLE bullish";
+      else reason = "PURPLE flip bullish (K5/ATR40) + CYAN & GREEN & BLUE bullish";
     }
-
-    // ── SELL: UT Bot 1 OR UT Bot 2 SELL signal (whichever first) ──
-    if (inPosition && (sell1 || sell2)) {
+    // ── SELL: CYAN or GREEN flips bearish ──
+    else if (inPosition && (cyanFlipSell || greenFlipSell)) {
       inPosition = false;
-      sig = "SELL"; trade = "EXIT";
-      reason = sell1 ? "UT Bot 1 sell" : "UT Bot 2 sell";
+      sig = "SELL";
+      reason = cyanFlipSell
+        ? "CYAN sell flip (K4/ATR1000)"
+        : "GREEN sell flip (K4/ATR10)";
     }
 
-    lastSignal = sig; lastTrade = trade; lastReason = reason;
+    lastSignal = sig;
+    lastReason = reason;
   }
 
   return {
     signal: lastSignal,
-    trade: lastTrade,
     reason: lastReason,
-    supertrend: stLine[N - 1],
-    stDirection: stDir[N - 1],
-    utBot1Trail: ts1,
-    utBot2Trail: ts2,
-    vwap: vwap[N - 1],
+    cyanPos: cyan.pos[N - 1],
+    cyanTrail: cyan.trail[N - 1],
+    greenPos: green.pos[N - 1],
+    greenTrail: green.trail[N - 1],
+    bluePos: blue.pos[N - 1],
+    blueTrail: blue.trail[N - 1],
+    purplePos: purple.pos[N - 1],
+    purpleTrail: purple.trail[N - 1],
     close: C[N - 1]
   };
 }
