@@ -9,11 +9,11 @@
 //   - GREEN (UT Bot 2): Key Value = 4, ATR Period = 10
 //   - BLUE  (UT Bot 3): Key Value = 3, ATR Period = 10
 //
-// NOTE ON ATR + SHORT INTRADAY HISTORY:
-//   Uses ONLY the available candles (no padding). ATR is an expanding average of
-//   true range until `period` samples exist, then switches to Wilder RMA. So
-//   CYAN's ATR Period = 1000 is defined and evolves across a ~350-candle session
-//   (it just behaves as the running average true range over all bars so far).
+// NOTE ON ATR:
+//   ATR is the standard TradingView Wilder RMA of true range (same as Pine
+//   `atr()`): seeded with the SMA of the first `period` true ranges, then Wilder
+//   smoothed. It is null until `period` bars exist, so CYAN (ATR=1000) needs
+//   well over 1000 candles before it can evolve and flip.
 //
 // BUY CONDITIONS (any one fires BUY; same-candle flips also qualify):
 //   1) CYAN flips bullish  + GREEN & BLUE already bullish.
@@ -37,23 +37,15 @@ function trueRangeSeries(H, L, C) {
   return tr;
 }
 
-// ATR base: expanding simple average of true range until `period` samples
-// exist, then Wilder RMA. Defined from the first bar, so large periods (e.g.
-// 1000) still produce a usable, evolving value on short histories (~350 bars).
+// Wilder RMA (TradingView `ta.rma`): SMA-seeded over the first `period` samples,
+// then Wilder smoothing. Returns null until `period` samples exist.
 function rmaSeries(src, period) {
   const out = new Array(src.length).fill(null);
-  if (!src.length) return out;
-  let sum = 0;
-  for (let i = 0; i < src.length; i++) {
-    if (i < period) {
-      // Expanding simple average until we have `period` samples.
-      sum += src[i];
-      out[i] = sum / (i + 1);
-    } else {
-      // Standard Wilder RMA once enough samples exist.
-      out[i] = (out[i - 1] * (period - 1) + src[i]) / period;
-    }
-  }
+  if (src.length < period) return out;
+  let s = 0;
+  for (let i = 0; i < period; i++) s += src[i];
+  out[period - 1] = s / period;
+  for (let i = period; i < src.length; i++) out[i] = (out[i - 1] * (period - 1) + src[i]) / period;
   return out;
 }
 

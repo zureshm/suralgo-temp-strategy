@@ -8,13 +8,13 @@
 //   - CYAN   (UT Bot 1): Key Value = 4, ATR Period = 1000
 //   - GREEN  (UT Bot 2): Key Value = 4, ATR Period = 10
 //   - BLUE   (UT Bot 3): Key Value = 3, ATR Period = 10
-//   - PURPLE (UT Bot 4): Key Value = 5, ATR Period = 40
+//   - PURPLE (UT Bot 4): Key Value = 5, ATR Period = 20
 //
-// NOTE ON ATR + SHORT INTRADAY HISTORY:
-//   Uses ONLY the available candles (no padding). ATR is an expanding average of
-//   true range until `period` samples exist, then switches to Wilder RMA. So
-//   CYAN's ATR Period = 1000 is defined and evolves across a ~350-candle session
-//   (it just behaves as the running average true range over all bars so far).
+// NOTE ON ATR:
+//   ATR is the standard TradingView Wilder RMA of true range (same as Pine
+//   `atr()`): seeded with the SMA of the first `period` true ranges, then Wilder
+//   smoothed. It is null until `period` bars exist, so CYAN (ATR=1000) needs
+//   well over 1000 candles before it can evolve and flip.
 //
 // BUY CONDITIONS (any one fires BUY; same-candle flips also qualify):
 //   1) CYAN flips bullish   + GREEN & BLUE & PURPLE already bullish.
@@ -39,23 +39,15 @@ function trueRangeSeries(H, L, C) {
   return tr;
 }
 
-// ATR base: expanding simple average of true range until `period` samples
-// exist, then Wilder RMA. Defined from the first bar, so large periods (e.g.
-// 1000) still produce a usable, evolving value on short histories (~350 bars).
+// Wilder RMA (TradingView `ta.rma`): SMA-seeded over the first `period` samples,
+// then Wilder smoothing. Returns null until `period` samples exist.
 function rmaSeries(src, period) {
   const out = new Array(src.length).fill(null);
-  if (!src.length) return out;
-  let sum = 0;
-  for (let i = 0; i < src.length; i++) {
-    if (i < period) {
-      // Expanding simple average until we have `period` samples.
-      sum += src[i];
-      out[i] = sum / (i + 1);
-    } else {
-      // Standard Wilder RMA once enough samples exist.
-      out[i] = (out[i - 1] * (period - 1) + src[i]) / period;
-    }
-  }
+  if (src.length < period) return out;
+  let s = 0;
+  for (let i = 0; i < period; i++) s += src[i];
+  out[period - 1] = s / period;
+  for (let i = period; i < src.length; i++) out[i] = (out[i - 1] * (period - 1) + src[i]) / period;
   return out;
 }
 
@@ -115,7 +107,7 @@ function VWAPUTBotStrategy(candles) {
   const cyan   = utBotSeries(H, L, C, 4, 1000); // CYAN   (Key=4, ATR=1000)
   const green  = utBotSeries(H, L, C, 4, 10);   // GREEN  (Key=4, ATR=10)
   const blue   = utBotSeries(H, L, C, 3, 10);   // BLUE   (Key=3, ATR=10)
-  const purple = utBotSeries(H, L, C, 5, 40);   // PURPLE (Key=5, ATR=40)
+  const purple = utBotSeries(H, L, C, 5, 20);   // PURPLE (Key=5, ATR=20)
 
   let inPosition = false;
   let lastSignal = "WAIT", lastReason = "No signal";
@@ -148,7 +140,7 @@ function VWAPUTBotStrategy(candles) {
       if (buy1) reason = "CYAN flip bullish (K4/ATR1000) + GREEN & BLUE & PURPLE bullish";
       else if (buy2) reason = "GREEN flip bullish (K4/ATR10) + CYAN & BLUE & PURPLE bullish";
       else if (buy3) reason = "BLUE flip bullish (K3/ATR10) + CYAN & GREEN & PURPLE bullish";
-      else reason = "PURPLE flip bullish (K5/ATR40) + CYAN & GREEN & BLUE bullish";
+      else reason = "PURPLE flip bullish (K5/ATR20) + CYAN & GREEN & BLUE bullish";
     }
     // ── SELL: CYAN or GREEN flips bearish ──
     else if (inPosition && (cyanFlipSell || greenFlipSell)) {
