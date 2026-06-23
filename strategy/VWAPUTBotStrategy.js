@@ -1,31 +1,23 @@
 // =============================================================================
-// VWAPUTBotStrategy — Quad UTBOT Confluence Strategy
+// VWAPUTBotStrategy — Triple UTBOT Confluence Strategy
 //
-// Based on claudSurStrategy (same standard TradingView UT Bot), with one extra
-// UT Bot (PURPLE). All four bots must be bullish together to BUY.
+// Based on claudSurStrategy (same standard TradingView UT Bot).
+// All three bots must be bullish together to BUY.
 //
 // INDICATORS & CONFIGURATION:
-//   - CYAN   (UT Bot 1): Key Value = 4, ATR Period = 1000
-//   - GREEN  (UT Bot 2): Key Value = 4, ATR Period = 10
-//   - BLUE   (UT Bot 3): Key Value = 3, ATR Period = 10
-//   - PURPLE (UT Bot 4): Key Value = 5, ATR Period = 20
-//
-// NOTE ON ATR:
-//   ATR is the standard TradingView Wilder RMA of true range (same as Pine
-//   `atr()`): seeded with the SMA of the first `period` true ranges, then Wilder
-//   smoothed. It is null until `period` bars exist, so CYAN (ATR=1000) needs
-//   well over 1000 candles before it can evolve and flip.
+//   - GREEN  (UT Bot 1): Key Value = 4, ATR Period = 10
+//   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
+//   - PURPLE (UT Bot 3): Key Value = 5, ATR Period = 20
 //
 // BUY CONDITIONS (any one fires BUY; same-candle flips also qualify):
-//   1) CYAN flips bullish   + GREEN & BLUE & PURPLE already bullish.
-//   2) GREEN flips bullish  + CYAN & BLUE & PURPLE already bullish.
-//   3) BLUE flips bullish   + CYAN & GREEN & PURPLE already bullish.
-//   4) PURPLE flips bullish + CYAN & GREEN & BLUE already bullish.
-//   (Net effect: all four must be bullish together, and at least one flipped
+//   1) GREEN flips bullish  + BLUE & PURPLE already bullish.
+//   2) BLUE flips bullish   + GREEN & PURPLE already bullish.
+//   3) PURPLE flips bullish + GREEN & BLUE already bullish.
+//   (Net effect: all three must be bullish together, and at least one flipped
 //    bullish on the current candle.)
 //
 // SELL CONDITIONS:
-//   CYAN OR GREEN flips bearish → SELL (whichever occurs first).
+//   GREEN flips bearish → SELL.
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -103,52 +95,44 @@ function VWAPUTBotStrategy(candles) {
   const C = candles.map(c => Number(c.close));
   const N = C.length;
 
-  // Four UT Bots
-  const cyan   = utBotSeries(H, L, C, 4, 1000); // CYAN   (Key=4, ATR=1000)
-  const green  = utBotSeries(H, L, C, 4, 10);   // GREEN  (Key=4, ATR=10)
-  const blue   = utBotSeries(H, L, C, 3, 10);   // BLUE   (Key=3, ATR=10)
-  const purple = utBotSeries(H, L, C, 5, 20);   // PURPLE (Key=5, ATR=20)
+  // Three UT Bots
+  const green  = utBotSeries(H, L, C, 4, 10); // GREEN  (Key=4, ATR=10)
+  const blue   = utBotSeries(H, L, C, 3, 10); // BLUE   (Key=3, ATR=10)
+  const purple = utBotSeries(H, L, C, 5, 20); // PURPLE (Key=5, ATR=20)
 
   let inPosition = false;
   let lastSignal = "WAIT", lastReason = "No signal";
 
   for (let i = 1; i < N; i++) {
-    const cyanBull   = cyan.pos[i] === 1;
     const greenBull  = green.pos[i] === 1;
     const blueBull   = blue.pos[i] === 1;
     const purpleBull = purple.pos[i] === 1;
 
-    const cyanFlipBuy   = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
     const greenFlipBuy  = green.pos[i] === 1 && green.pos[i - 1] !== 1;
     const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
     const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
 
-    const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
     const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
 
     let sig = "WAIT", reason = "No signal";
 
-    // ── BUY: all four bullish together AND at least one flipped bullish now ──
-    const buy1 = cyanFlipBuy   && greenBull && blueBull   && purpleBull; // CYAN trigger
-    const buy2 = greenFlipBuy  && cyanBull  && blueBull   && purpleBull; // GREEN trigger
-    const buy3 = blueFlipBuy   && cyanBull  && greenBull  && purpleBull; // BLUE trigger
-    const buy4 = purpleFlipBuy && cyanBull  && greenBull  && blueBull;   // PURPLE trigger
+    // ── BUY: all three bullish together AND at least one flipped bullish now ──
+    const buy1 = greenFlipBuy  && blueBull  && purpleBull; // GREEN trigger
+    const buy2 = blueFlipBuy   && greenBull && purpleBull; // BLUE trigger
+    const buy3 = purpleFlipBuy && greenBull && blueBull;   // PURPLE trigger
 
-    if (!inPosition && (buy1 || buy2 || buy3 || buy4)) {
+    if (!inPosition && (buy1 || buy2 || buy3)) {
       inPosition = true;
       sig = "BUY";
-      if (buy1) reason = "CYAN flip bullish (K4/ATR1000) + GREEN & BLUE & PURPLE bullish";
-      else if (buy2) reason = "GREEN flip bullish (K4/ATR10) + CYAN & BLUE & PURPLE bullish";
-      else if (buy3) reason = "BLUE flip bullish (K3/ATR10) + CYAN & GREEN & PURPLE bullish";
-      else reason = "PURPLE flip bullish (K5/ATR20) + CYAN & GREEN & BLUE bullish";
+      if (buy1) reason = "GREEN flip bullish (K4/ATR10) + BLUE & PURPLE bullish";
+      else if (buy2) reason = "BLUE flip bullish (K3/ATR10) + GREEN & PURPLE bullish";
+      else reason = "PURPLE flip bullish (K5/ATR20) + GREEN & BLUE bullish";
     }
-    // ── SELL: CYAN or GREEN flips bearish ──
-    else if (inPosition && (cyanFlipSell || greenFlipSell)) {
+    // ── SELL: GREEN flips bearish ──
+    else if (inPosition && greenFlipSell) {
       inPosition = false;
       sig = "SELL";
-      reason = cyanFlipSell
-        ? "CYAN sell flip (K4/ATR1000)"
-        : "GREEN sell flip (K4/ATR10)";
+      reason = "GREEN sell flip (K4/ATR10)";
     }
 
     lastSignal = sig;
@@ -158,8 +142,6 @@ function VWAPUTBotStrategy(candles) {
   return {
     signal: lastSignal,
     reason: lastReason,
-    cyanPos: cyan.pos[N - 1],
-    cyanTrail: cyan.trail[N - 1],
     greenPos: green.pos[N - 1],
     greenTrail: green.trail[N - 1],
     bluePos: blue.pos[N - 1],

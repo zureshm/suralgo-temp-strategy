@@ -6,14 +6,14 @@ const cors = require("cors");
 const { evaluateEMACross } = require("./strategy/evaluateEMACross");
 const { surStrategy } = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
-const { claudSurStrategy } = require("./strategy/claudSurStrategy");
+const { claudSurStrategy : Kumbhakarna_V1} = require("./strategy/claudSurStrategy");
 const { superUTBotStrategy } = require("./strategy/superUTBotStrategy");
 const { superDoubleUT } = require("./strategy/superDoubleUT");
 const { utGptStrategy } = require("./strategy/UTGPTStrategy");
 const { utGptStrategy1 } = require("./strategy/UTGPTStrategy1");
 const { utGptStrategy2 } = require("./strategy/UTGPTStrategy2");
 const { utGptStrategy3 } = require("./strategy/UTGPTStrategy3");
-const { VWAPUTBotStrategy } = require("./strategy/VWAPUTBotStrategy");
+const { VWAPUTBotStrategy: Kumbhakarna_V2} = require("./strategy/VWAPUTBotStrategy");
 const { sumeshStrategy } = require("./strategy/SumeshStrategy");
 const { utGptStrategy4 } = require("./strategy/UTGPTStrategy4");
 const { utGptStrategy4X } = require("./strategy/UTGPTStrategy4X");
@@ -78,14 +78,14 @@ const strategies = {
   evaluateEMACross,
   surStrategy,
   chatGptStrategy,
-  claudSurStrategy,
+  Kumbhakarna_V1,
   superUTBotStrategy,
   superDoubleUT,
   utGptStrategy,
   utGptStrategy1,
   utGptStrategy2,
   utGptStrategy3,
-  VWAPUTBotStrategy,
+  Kumbhakarna_V2,
   sumeshStrategy,
   utGptStrategy4,
   utGptStrategy4X
