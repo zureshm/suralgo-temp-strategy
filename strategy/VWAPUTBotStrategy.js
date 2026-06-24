@@ -8,16 +8,17 @@
 //   - GREEN  (UT Bot 1): Key Value = 4, ATR Period = 10
 //   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
 //   - PURPLE (UT Bot 3): Key Value = 5, ATR Period = 20
+//   - CYAN   (UT Bot 4): Key Value = 4, ATR Period = 1000  [SELL trigger only]
 //
 // BUY CONDITIONS (any one fires BUY; same-candle flips also qualify):
 //   1) GREEN flips bullish  + BLUE & PURPLE already bullish.
 //   2) BLUE flips bullish   + GREEN & PURPLE already bullish.
 //   3) PURPLE flips bullish + GREEN & BLUE already bullish.
 //   (Net effect: all three must be bullish together, and at least one flipped
-//    bullish on the current candle.)
+//    bullish on the current candle. CYAN is NOT involved in BUY.)
 //
 // SELL CONDITIONS:
-//   GREEN flips bearish → SELL.
+//   GREEN OR CYAN flips bearish → SELL (whichever occurs first).
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -95,10 +96,11 @@ function VWAPUTBotStrategy(candles) {
   const C = candles.map(c => Number(c.close));
   const N = C.length;
 
-  // Three UT Bots
-  const green  = utBotSeries(H, L, C, 4, 10); // GREEN  (Key=4, ATR=10)
-  const blue   = utBotSeries(H, L, C, 3, 10); // BLUE   (Key=3, ATR=10)
-  const purple = utBotSeries(H, L, C, 5, 20); // PURPLE (Key=5, ATR=20)
+  // Three BUY bots + one SELL-only bot
+  const green  = utBotSeries(H, L, C, 4, 10);   // GREEN  (Key=4, ATR=10)
+  const blue   = utBotSeries(H, L, C, 3, 10);   // BLUE   (Key=3, ATR=10)
+  const purple = utBotSeries(H, L, C, 5, 20);   // PURPLE (Key=5, ATR=20)
+  const cyan   = utBotSeries(H, L, C, 4, 1000); // CYAN   (Key=4, ATR=1000) — SELL only
 
   let inPosition = false;
   let lastSignal = "WAIT", lastReason = "No signal";
@@ -113,6 +115,7 @@ function VWAPUTBotStrategy(candles) {
     const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
 
     const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
+    const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
 
     let sig = "WAIT", reason = "No signal";
 
@@ -128,11 +131,13 @@ function VWAPUTBotStrategy(candles) {
       else if (buy2) reason = "BLUE flip bullish (K3/ATR10) + GREEN & PURPLE bullish";
       else reason = "PURPLE flip bullish (K5/ATR20) + GREEN & BLUE bullish";
     }
-    // ── SELL: GREEN flips bearish ──
-    else if (inPosition && greenFlipSell) {
+    // ── SELL: GREEN or CYAN flips bearish ──
+    else if (inPosition && (greenFlipSell || cyanFlipSell)) {
       inPosition = false;
       sig = "SELL";
-      reason = "GREEN sell flip (K4/ATR10)";
+      reason = cyanFlipSell
+        ? "CYAN sell flip (K4/ATR1000)"
+        : "GREEN sell flip (K4/ATR10)";
     }
 
     lastSignal = sig;
@@ -148,6 +153,8 @@ function VWAPUTBotStrategy(candles) {
     blueTrail: blue.trail[N - 1],
     purplePos: purple.pos[N - 1],
     purpleTrail: purple.trail[N - 1],
+    cyanPos: cyan.pos[N - 1],
+    cyanTrail: cyan.trail[N - 1],
     close: C[N - 1]
   };
 }
