@@ -1,24 +1,23 @@
 // =============================================================================
-// VWAPUTBotStrategy — Triple UTBOT Confluence Strategy
-//
-// Based on claudSurStrategy (same standard TradingView UT Bot).
-// All three bots must be bullish together to BUY.
+// VWAPUTBotStrategy — Quad UTBOT Confluence Strategy
 //
 // INDICATORS & CONFIGURATION:
 //   - GREEN  (UT Bot 1): Key Value = 4, ATR Period = 10
 //   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
 //   - PURPLE (UT Bot 3): Key Value = 5, ATR Period = 20
-//   - CYAN   (UT Bot 4): Key Value = 4, ATR Period = 1000  [SELL trigger only]
+//   - CYAN   (UT Bot 4): Key Value = 5, ATR Period = 1000
 //
-// BUY CONDITIONS (any one fires BUY; same-candle flips also qualify):
-//   1) GREEN flips bullish  + BLUE & PURPLE already bullish.
-//   2) BLUE flips bullish   + GREEN & PURPLE already bullish.
-//   3) PURPLE flips bullish + GREEN & BLUE already bullish.
-//   (Net effect: all three must be bullish together, and at least one flipped
-//    bullish on the current candle. CYAN is NOT involved in BUY.)
+// BUY CONDITIONS (any one fires BUY):
+//   1) CYAN flips bullish + GREEN already bullish + PURPLE NOT bullish on any
+//      previous candle (i.e. PURPLE must be in bearish/neutral state).
+//   2) PURPLE and CYAN both flip bullish on same candle + GREEN already bullish.
+//      (Overrides the PURPLE-bearish requirement of rule 1.)
+//   3) BLUE flips bullish + GREEN & PURPLE & CYAN already bullish.
+//   4) PURPLE flips bullish + GREEN & BLUE & CYAN already bullish.
+//   5) GREEN flips bullish + CYAN & BLUE & PURPLE already bullish.
 //
 // SELL CONDITIONS:
-//   GREEN OR CYAN flips bearish → SELL (whichever occurs first).
+//   BLUE OR CYAN OR GREEN OR PURPLE flips bearish → SELL.
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -96,11 +95,11 @@ function VWAPUTBotStrategy(candles) {
   const C = candles.map(c => Number(c.close));
   const N = C.length;
 
-  // Three BUY bots + one SELL-only bot
+  // Four UT Bots
   const green  = utBotSeries(H, L, C, 4, 10);   // GREEN  (Key=4, ATR=10)
   const blue   = utBotSeries(H, L, C, 3, 10);   // BLUE   (Key=3, ATR=10)
   const purple = utBotSeries(H, L, C, 5, 20);   // PURPLE (Key=5, ATR=20)
-  const cyan   = utBotSeries(H, L, C, 4, 1000); // CYAN   (Key=4, ATR=1000) — SELL only
+  const cyan   = utBotSeries(H, L, C, 5, 1000); // CYAN   (Key=5, ATR=1000)
 
   let inPosition = false;
   let lastSignal = "WAIT", lastReason = "No signal";
@@ -109,35 +108,52 @@ function VWAPUTBotStrategy(candles) {
     const greenBull  = green.pos[i] === 1;
     const blueBull   = blue.pos[i] === 1;
     const purpleBull = purple.pos[i] === 1;
+    const cyanBull   = cyan.pos[i] === 1;
 
     const greenFlipBuy  = green.pos[i] === 1 && green.pos[i - 1] !== 1;
     const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
     const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
+    const cyanFlipBuy   = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
 
-    const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
-    const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
+    const greenFlipSell  = green.pos[i] === -1 && green.pos[i - 1] !== -1;
+    const blueFlipSell   = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
+    const purpleFlipSell = purple.pos[i] === -1 && purple.pos[i - 1] !== -1;
+    const cyanFlipSell   = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
+
+    // PURPLE must NOT have been bullish on the previous candle (for buy1)
+    const purpleWasBearish = purple.pos[i - 1] !== 1;
 
     let sig = "WAIT", reason = "No signal";
 
-    // ── BUY: all three bullish together AND at least one flipped bullish now ──
-    const buy1 = greenFlipBuy  && blueBull  && purpleBull; // GREEN trigger
-    const buy2 = blueFlipBuy   && greenBull && purpleBull; // BLUE trigger
-    const buy3 = purpleFlipBuy && greenBull && blueBull;   // PURPLE trigger
+    // ── BUY CONDITIONS ──
+    // 1) CYAN flips bullish + GREEN bullish + PURPLE NOT already bullish
+    const buy1 = cyanFlipBuy && greenBull && !purpleBull && purpleWasBearish;
+    // 2) PURPLE & CYAN both flip bullish same candle + GREEN bullish
+    const buy2 = purpleFlipBuy && cyanFlipBuy && greenBull;
+    // 3) BLUE flips bullish + GREEN & PURPLE & CYAN already bullish
+    const buy3 = blueFlipBuy && greenBull && purpleBull && cyanBull;
+    // 4) PURPLE flips bullish + GREEN & BLUE & CYAN already bullish
+    const buy4 = purpleFlipBuy && greenBull && blueBull && cyanBull;
+    // 5) GREEN flips bullish + CYAN & BLUE & PURPLE already bullish
+    const buy5 = greenFlipBuy && cyanBull && blueBull && purpleBull;
 
-    if (!inPosition && (buy1 || buy2 || buy3)) {
+    if (!inPosition && (buy1 || buy2 || buy3 || buy4 || buy5)) {
       inPosition = true;
       sig = "BUY";
-      if (buy1) reason = "GREEN flip bullish (K4/ATR10) + BLUE & PURPLE bullish";
-      else if (buy2) reason = "BLUE flip bullish (K3/ATR10) + GREEN & PURPLE bullish";
-      else reason = "PURPLE flip bullish (K5/ATR20) + GREEN & BLUE bullish";
+      if (buy1) reason = "CYAN flip bullish (K5/ATR1000) + GREEN bullish + PURPLE bearish";
+      else if (buy2) reason = "PURPLE & CYAN flip bullish same candle + GREEN bullish";
+      else if (buy3) reason = "BLUE flip bullish (K3/ATR10) + GREEN & PURPLE & CYAN bullish";
+      else if (buy4) reason = "PURPLE flip bullish (K5/ATR20) + GREEN & BLUE & CYAN bullish";
+      else reason = "GREEN flip bullish (K4/ATR10) + CYAN & BLUE & PURPLE bullish";
     }
-    // ── SELL: GREEN or CYAN flips bearish ──
-    else if (inPosition && (greenFlipSell || cyanFlipSell)) {
+    // ── SELL: any of the 4 bots flips bearish ──
+    else if (inPosition && (greenFlipSell || blueFlipSell || purpleFlipSell || cyanFlipSell)) {
       inPosition = false;
       sig = "SELL";
-      reason = cyanFlipSell
-        ? "CYAN sell flip (K4/ATR1000)"
-        : "GREEN sell flip (K4/ATR10)";
+      if (cyanFlipSell) reason = "CYAN sell flip (K5/ATR1000)";
+      else if (greenFlipSell) reason = "GREEN sell flip (K4/ATR10)";
+      else if (blueFlipSell) reason = "BLUE sell flip (K3/ATR10)";
+      else reason = "PURPLE sell flip (K5/ATR20)";
     }
 
     lastSignal = sig;
