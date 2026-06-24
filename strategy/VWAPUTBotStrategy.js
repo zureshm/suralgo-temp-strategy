@@ -6,9 +6,12 @@
 //   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
 //   - PURPLE (UT Bot 3): Key Value = 5, ATR Period = 20
 //   - CYAN   (UT Bot 4): Key Value = 6, ATR Period = 1000
+//   - DARKGREEN (UT Bot 5): Key Value = 6, ATR Period = 60
 //
 // BUY CONDITIONS (any one fires BUY):
 //   1) CYAN flips bullish + GREEN bullish + PURPLE bearish right now.
+//   1b) CYAN flips bullish + GREEN bullish + DARKGREEN already bullish
+//       (overrides PURPLE-bearish requirement of rule 1).
 //   2) PURPLE & CYAN both flip bullish same candle + GREEN bullish
 //      (overrides PURPLE-bearish requirement of rule 1).
 //   3) BLUE flips bullish + GREEN & PURPLE & CYAN bullish on that candle.
@@ -94,20 +97,22 @@ function VWAPUTBotStrategy(candles) {
   const C = candles.map(c => Number(c.close));
   const N = C.length;
 
-  // Four UT Bots
-  const green  = utBotSeries(H, L, C, 4, 10);   // GREEN  (Key=4, ATR=10)
-  const blue   = utBotSeries(H, L, C, 3, 10);   // BLUE   (Key=3, ATR=10)
-  const purple = utBotSeries(H, L, C, 5, 20);   // PURPLE (Key=5, ATR=20)
-  const cyan   = utBotSeries(H, L, C, 6, 1000); // CYAN   (Key=6, ATR=1000)
+  // Five UT Bots
+  const green     = utBotSeries(H, L, C, 4, 10);   // GREEN     (Key=4, ATR=10)
+  const blue      = utBotSeries(H, L, C, 3, 10);   // BLUE      (Key=3, ATR=10)
+  const purple    = utBotSeries(H, L, C, 5, 20);   // PURPLE    (Key=5, ATR=20)
+  const cyan      = utBotSeries(H, L, C, 6, 1000); // CYAN      (Key=6, ATR=1000)
+  const darkgreen = utBotSeries(H, L, C, 6, 60);   // DARKGREEN (Key=6, ATR=60)
 
   let inPosition = false;
   let lastSignal = "WAIT", lastReason = "No signal";
 
   for (let i = 1; i < N; i++) {
-    const greenBull  = green.pos[i] === 1;
-    const blueBull   = blue.pos[i] === 1;
-    const purpleBull = purple.pos[i] === 1;
-    const cyanBull   = cyan.pos[i] === 1;
+    const greenBull     = green.pos[i] === 1;
+    const blueBull      = blue.pos[i] === 1;
+    const purpleBull    = purple.pos[i] === 1;
+    const cyanBull      = cyan.pos[i] === 1;
+    const darkgreenBull = darkgreen.pos[i] === 1;
 
     const greenFlipBuy  = green.pos[i] === 1 && green.pos[i - 1] !== 1;
     const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
@@ -123,7 +128,9 @@ function VWAPUTBotStrategy(candles) {
 
     // ── BUY CONDITIONS ──
     // 1) CYAN flips + GREEN bullish + PURPLE bearish right now
-    const buy1 = cyanFlipBuy && greenBull && !purpleBull;
+    const buy1 = cyanFlipBuy && greenBull && !purpleBull && !darkgreenBull;
+    // 1b) CYAN flips + GREEN bullish + DARKGREEN already bullish (overrides PURPLE ban)
+    const buy1b = cyanFlipBuy && greenBull && darkgreenBull;
     // 2) PURPLE & CYAN both flip same candle + GREEN bullish
     const buy2 = purpleFlipBuy && cyanFlipBuy && greenBull;
     // 3) BLUE flips + GREEN & PURPLE & CYAN bullish
@@ -133,10 +140,11 @@ function VWAPUTBotStrategy(candles) {
     // 5) GREEN flips + CYAN & BLUE & PURPLE bullish
     const buy5 = greenFlipBuy && cyanBull && blueBull && purpleBull;
 
-    if (!inPosition && (buy1 || buy2 || buy3 || buy4 || buy5)) {
+    if (!inPosition && (buy1 || buy1b || buy2 || buy3 || buy4 || buy5)) {
       inPosition = true;
       sig = "BUY";
       if (buy1) reason = "CYAN flip (K6/ATR1000) + GREEN bullish + PURPLE bearish";
+      else if (buy1b) reason = "CYAN flip (K6/ATR1000) + GREEN bullish + DARKGREEN override";
       else if (buy2) reason = "PURPLE & CYAN flip same candle + GREEN bullish";
       else if (buy3) reason = "BLUE flip (K3/ATR10) + GREEN & PURPLE & CYAN bullish";
       else if (buy4) reason = "PURPLE flip (K5/ATR20) + GREEN & BLUE & CYAN bullish";
@@ -167,6 +175,8 @@ function VWAPUTBotStrategy(candles) {
     purpleTrail: purple.trail[N - 1],
     cyanPos: cyan.pos[N - 1],
     cyanTrail: cyan.trail[N - 1],
+    darkgreenPos: darkgreen.pos[N - 1],
+    darkgreenTrail: darkgreen.trail[N - 1],
     close: C[N - 1]
   };
 }

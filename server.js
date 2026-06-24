@@ -13,7 +13,7 @@ const { utGptStrategy } = require("./strategy/UTGPTStrategy");
 const { utGptStrategy1 } = require("./strategy/UTGPTStrategy1");
 const { utGptStrategy2 } = require("./strategy/UTGPTStrategy2");
 const { utGptStrategy3 } = require("./strategy/UTGPTStrategy3");
-const { VWAPUTBotStrategy: DuSShakuni} = require("./strategy/VWAPUTBotStrategy");
+const { VWAPUTBotStrategy: Shakunam} = require("./strategy/VWAPUTBotStrategy");
 const { sumeshStrategy } = require("./strategy/SumeshStrategy");
 const { utGptStrategy4 } = require("./strategy/UTGPTStrategy4");
 const { utGptStrategy4X } = require("./strategy/UTGPTStrategy4X");
@@ -85,7 +85,7 @@ const strategies = {
   utGptStrategy1,
   utGptStrategy2,
   utGptStrategy3,
-  DuSShakuni,
+  Shakunam,
   sumeshStrategy,
   utGptStrategy4,
   utGptStrategy4X
