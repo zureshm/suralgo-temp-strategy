@@ -92,7 +92,7 @@ const strategies = {
 };
 
 // Active strategy (default)
-let activeStrategy = "utGptStrategy4X";
+let activeStrategy = "Shakunam";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};
