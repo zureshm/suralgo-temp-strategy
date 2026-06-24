@@ -5,7 +5,7 @@
 //   - GREEN  (UT Bot 1): Key Value = 4, ATR Period = 10
 //   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
 //   - PURPLE (UT Bot 3): Key Value = 5, ATR Period = 20
-//   - CYAN   (UT Bot 4): Key Value = 5, ATR Period = 1000
+//   - CYAN   (UT Bot 4): Key Value = 6, ATR Period = 1000
 //
 // BUY CONDITIONS (any one fires BUY):
 //   1) CYAN flips bullish + GREEN bullish + PURPLE bearish right now.
@@ -98,7 +98,7 @@ function VWAPUTBotStrategy(candles) {
   const green  = utBotSeries(H, L, C, 4, 10);   // GREEN  (Key=4, ATR=10)
   const blue   = utBotSeries(H, L, C, 3, 10);   // BLUE   (Key=3, ATR=10)
   const purple = utBotSeries(H, L, C, 5, 20);   // PURPLE (Key=5, ATR=20)
-  const cyan   = utBotSeries(H, L, C, 5, 1000); // CYAN   (Key=5, ATR=1000)
+  const cyan   = utBotSeries(H, L, C, 6, 1000); // CYAN   (Key=6, ATR=1000)
 
   let inPosition = false;
   let lastSignal = "WAIT", lastReason = "No signal";
@@ -136,7 +136,7 @@ function VWAPUTBotStrategy(candles) {
     if (!inPosition && (buy1 || buy2 || buy3 || buy4 || buy5)) {
       inPosition = true;
       sig = "BUY";
-      if (buy1) reason = "CYAN flip (K5/ATR1000) + GREEN bullish + PURPLE bearish";
+      if (buy1) reason = "CYAN flip (K6/ATR1000) + GREEN bullish + PURPLE bearish";
       else if (buy2) reason = "PURPLE & CYAN flip same candle + GREEN bullish";
       else if (buy3) reason = "BLUE flip (K3/ATR10) + GREEN & PURPLE & CYAN bullish";
       else if (buy4) reason = "PURPLE flip (K5/ATR20) + GREEN & BLUE & CYAN bullish";
@@ -146,7 +146,7 @@ function VWAPUTBotStrategy(candles) {
     else if (inPosition && (greenFlipSell || blueFlipSell || purpleFlipSell || cyanFlipSell)) {
       inPosition = false;
       sig = "SELL";
-      if (cyanFlipSell) reason = "CYAN sell flip (K5/ATR1000)";
+      if (cyanFlipSell) reason = "CYAN sell flip (K6/ATR1000)";
       else if (greenFlipSell) reason = "GREEN sell flip (K4/ATR10)";
       else if (blueFlipSell) reason = "BLUE sell flip (K3/ATR10)";
       else reason = "PURPLE sell flip (K5/ATR20)";
