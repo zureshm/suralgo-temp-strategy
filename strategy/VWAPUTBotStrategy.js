@@ -5,7 +5,8 @@
 //   - GREEN  (UT Bot 1): Key Value = 4, ATR Period = 10
 //   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
 //   - PURPLE (UT Bot 3): Key Value = 5, ATR Period = 20
-//   - CYAN   (UT Bot 4): Key Value = 6, ATR Period = 1000
+//   - CYAN   (UT Bot 4): Dynamic Key (5-15 based on premium), ATR Period = 1000
+//     Key tiers: <100→5, 100-120→6, 120-150→7, 150-200→8, then +1 per 50 up to 500+→15
 //   - DARKGREEN (UT Bot 5): Key Value = 6, ATR Period = 60
 //
 // BUY CONDITIONS (any one fires BUY):
@@ -46,6 +47,51 @@ function rmaSeries(src, period) {
 }
 
 function atrSeries(H, L, C, period) { return rmaSeries(trueRangeSeries(H, L, C), period); }
+
+// ── Dynamic Key for CYAN based on premium (close price) ─────────────────────
+function getDynamicCyanKey(close) {
+  if (close < 100) return 6;
+  if (close < 120) return 7;
+  if (close < 150) return 8;
+  if (close < 200) return 9;
+  // 200+ : every +50 adds +1 key (200→9, 250→10, 300→11, 350→12, 400→13, 450→14, 500+→15)
+  const key = 10 + Math.floor((close - 200) / 50);
+  return Math.min(key, 16);
+}
+
+// ── UT Bot with dynamic key value (key changes per candle based on close) ────
+function utBotSeriesDynamicKey(H, L, C, atrPeriod) {
+  const N = C.length;
+  const atr = atrSeries(H, L, C, atrPeriod);
+  const posArr = new Array(N).fill(0);
+  const tsArr = new Array(N).fill(null);
+
+  let ts = 0, pos = 0;
+  for (let i = 1; i < N; i++) {
+    if (atr[i] == null) { posArr[i] = pos; tsArr[i] = ts; continue; }
+    const keyValue = getDynamicCyanKey(C[i]);
+    const nLoss = keyValue * atr[i];
+    const prevTS = ts;
+
+    if (C[i] > prevTS && C[i - 1] > prevTS) {
+      ts = Math.max(prevTS, C[i] - nLoss);
+    } else if (C[i] < prevTS && C[i - 1] < prevTS) {
+      ts = Math.min(prevTS, C[i] + nLoss);
+    } else if (C[i] > prevTS) {
+      ts = C[i] - nLoss;
+    } else {
+      ts = C[i] + nLoss;
+    }
+
+    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
+    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
+
+    posArr[i] = pos;
+    tsArr[i] = ts;
+  }
+
+  return { pos: posArr, trail: tsArr };
+}
 
 // ── Standard UT Bot (ATR trailing stop) ──────────────────────────────────────
 // Returns per-candle position series (1 = bullish, -1 = bearish) and the
@@ -101,7 +147,7 @@ function VWAPUTBotStrategy(candles) {
   const green     = utBotSeries(H, L, C, 4, 10);   // GREEN     (Key=4, ATR=10)
   const blue      = utBotSeries(H, L, C, 3, 10);   // BLUE      (Key=3, ATR=10)
   const purple    = utBotSeries(H, L, C, 5, 20);   // PURPLE    (Key=5, ATR=20)
-  const cyan      = utBotSeries(H, L, C, 6, 1000); // CYAN      (Key=6, ATR=1000)
+  const cyan      = utBotSeriesDynamicKey(H, L, C, 1000); // CYAN (Dynamic Key, ATR=1000)
   const darkgreen = utBotSeries(H, L, C, 6, 60);   // DARKGREEN (Key=6, ATR=60)
 
   let inPosition = false;
