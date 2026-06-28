@@ -5,7 +5,8 @@
 // implementation used across our other strategies.
 //
 // INDICATORS & CONFIGURATION:
-//   - CYAN  (UT Bot 1): Key Value = 4, ATR Period = 1000
+//   - CYAN  (UT Bot 1): Dynamic Key (6-16 based on 5-candle avg close), ATR Period = 1000
+//     Key tiers: <100→6, 100-120→7, 120-150→8, 150-200→9, then +1 per 50 up to 500+→16
 //   - GREEN (UT Bot 2): Key Value = 4, ATR Period = 10
 //   - BLUE  (UT Bot 3): Key Value = 3, ATR Period = 10
 //
@@ -50,6 +51,56 @@ function rmaSeries(src, period) {
 }
 
 function atrSeries(H, L, C, period) { return rmaSeries(trueRangeSeries(H, L, C), period); }
+
+// ── Dynamic Key for CYAN based on 5-candle average close ────────────────────
+function getDynamicCyanKey(avgClose) {
+  if (avgClose < 100) return 6;
+  if (avgClose < 120) return 7;
+  if (avgClose < 150) return 8;
+  if (avgClose < 200) return 9;
+  // 200+ : every +50 adds +1 key (200→10, 250→11, 300→12, ... 500+→16)
+  const key = 10 + Math.floor((avgClose - 200) / 50);
+  return Math.min(key, 16);
+}
+
+// ── UT Bot with dynamic key (key from 5-candle avg close, changes per candle) ──
+function utBotSeriesDynamicKey5Avg(H, L, C, atrPeriod) {
+  const N = C.length;
+  const atr = atrSeries(H, L, C, atrPeriod);
+  const posArr = new Array(N).fill(0);
+  const tsArr = new Array(N).fill(null);
+
+  let ts = 0, pos = 0;
+  for (let i = 1; i < N; i++) {
+    if (atr[i] == null) { posArr[i] = pos; tsArr[i] = ts; continue; }
+    // 5-candle average close (or fewer if near start)
+    const lookback = Math.min(5, i + 1);
+    let sum = 0;
+    for (let j = i; j > i - lookback; j--) sum += C[j];
+    const avgClose = sum / lookback;
+    const keyValue = getDynamicCyanKey(avgClose);
+    const nLoss = keyValue * atr[i];
+    const prevTS = ts;
+
+    if (C[i] > prevTS && C[i - 1] > prevTS) {
+      ts = Math.max(prevTS, C[i] - nLoss);
+    } else if (C[i] < prevTS && C[i - 1] < prevTS) {
+      ts = Math.min(prevTS, C[i] + nLoss);
+    } else if (C[i] > prevTS) {
+      ts = C[i] - nLoss;
+    } else {
+      ts = C[i] + nLoss;
+    }
+
+    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
+    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
+
+    posArr[i] = pos;
+    tsArr[i] = ts;
+  }
+
+  return { pos: posArr, trail: tsArr };
+}
 
 // ── Standard UT Bot (ATR trailing stop) ──────────────────────────────────────
 // Returns per-candle position series (1 = bullish, -1 = bearish) and the
@@ -102,7 +153,7 @@ function claudSurStrategy(candles) {
   const N = C.length;
 
   // Three UT Bots
-  const cyan  = utBotSeries(H, L, C, 4, 1000); // CYAN  (Key=4, ATR=1000)
+  const cyan  = utBotSeriesDynamicKey5Avg(H, L, C, 1000); // CYAN (Dynamic Key, 5-avg, ATR=1000)
   const green = utBotSeries(H, L, C, 4, 10);   // GREEN (Key=4, ATR=10)
   const blue  = utBotSeries(H, L, C, 3, 10);   // BLUE  (Key=3, ATR=10)
 
@@ -131,7 +182,7 @@ function claudSurStrategy(candles) {
     if (!inPosition && (buy1 || buy2 || buy3)) {
       inPosition = true;
       sig = "BUY";
-      if (buy1) reason = "CYAN flip bullish (K4/ATR1000) + GREEN & BLUE bullish";
+      if (buy1) reason = "CYAN flip bullish (Dynamic/ATR1000) + GREEN & BLUE bullish";
       else if (buy2) reason = "GREEN flip bullish (K4/ATR10) + CYAN & BLUE bullish";
       else reason = "BLUE flip bullish (K3/ATR10) + CYAN & GREEN bullish";
     }
@@ -140,7 +191,7 @@ function claudSurStrategy(candles) {
       inPosition = false;
       sig = "SELL";
       reason = cyanFlipSell
-        ? "CYAN sell flip (K4/ATR1000)"
+        ? "CYAN sell flip (Dynamic/ATR1000)"
         : "GREEN sell flip (K4/ATR10)";
     }
 
