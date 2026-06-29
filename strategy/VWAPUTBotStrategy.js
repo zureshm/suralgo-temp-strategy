@@ -54,9 +54,13 @@ function getDynamicCyanKey(close) {
   if (close < 120) return 7;
   if (close < 150) return 8;
   if (close < 200) return 9;
-  // 200+ : every +50 adds +1 key (200→9, 250→10, 300→11, 350→12, 400→13, 450→14, 500+→15)
-  const key = 10 + Math.floor((close - 200) / 50);
-  return Math.min(key, 16);
+  if (close < 220) return 10;
+  if (close < 250) return 11;
+  if (close < 300) return 12;
+  if (close < 320) return 13;
+  if (close < 350) return 14;
+  if (close < 400) return 15;
+  return 16;
 }
 
 // ── UT Bot with dynamic key value (key changes per candle based on close) ────

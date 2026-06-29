@@ -58,9 +58,13 @@ function getDynamicCyanKey(avgClose) {
   if (avgClose < 120) return 7;
   if (avgClose < 150) return 8;
   if (avgClose < 200) return 9;
-  // 200+ : every +50 adds +1 key (200→10, 250→11, 300→12, ... 500+→16)
-  const key = 10 + Math.floor((avgClose - 200) / 50);
-  return Math.min(key, 16);
+  if (avgClose < 220) return 10;
+  if (avgClose < 250) return 11;
+  if (avgClose < 300) return 12;
+  if (avgClose < 320) return 13;
+  if (avgClose < 350) return 14;
+  if (avgClose < 400) return 15;
+  return 16;
 }
 
 // ── UT Bot with dynamic key (key from 5-candle avg close, changes per candle) ──

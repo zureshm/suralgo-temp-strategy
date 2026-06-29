@@ -6,14 +6,14 @@ const cors = require("cors");
 const { evaluateEMACross } = require("./strategy/evaluateEMACross");
 const { surStrategy } = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
-const { claudSurStrategy : Kumbhakarna_DX} = require("./strategy/claudSurStrategy");
+const { claudSurStrategy : Kumbhakarna_DY} = require("./strategy/claudSurStrategy");
 const { superUTBotStrategy } = require("./strategy/superUTBotStrategy");
 const { superDoubleUT } = require("./strategy/superDoubleUT");
 const { utGptStrategy } = require("./strategy/UTGPTStrategy");
 const { utGptStrategy1 } = require("./strategy/UTGPTStrategy1");
 const { utGptStrategy2 } = require("./strategy/UTGPTStrategy2");
 const { utGptStrategy3 } = require("./strategy/UTGPTStrategy3");
-const { VWAPUTBotStrategy: Shakunam_DX} = require("./strategy/VWAPUTBotStrategy");
+const { VWAPUTBotStrategy: Shakunam_DY} = require("./strategy/VWAPUTBotStrategy");
 const { sumeshStrategy } = require("./strategy/SumeshStrategy");
 const { utGptStrategy4 } = require("./strategy/UTGPTStrategy4");
 const { utGptStrategy4X } = require("./strategy/UTGPTStrategy4X");
@@ -78,21 +78,21 @@ const strategies = {
   evaluateEMACross,
   surStrategy,
   chatGptStrategy,
-  Kumbhakarna_DX,
+  Kumbhakarna_DY,
   superUTBotStrategy,
   superDoubleUT,
   utGptStrategy,
   utGptStrategy1,
   utGptStrategy2,
   utGptStrategy3,
-  Shakunam_DX,
+  Shakunam_DY,
   sumeshStrategy,
   utGptStrategy4,
   utGptStrategy4X
 };
 
 // Active strategy (default)
-let activeStrategy = "Shakunam_DX";
+let activeStrategy = "Shakunam_DY";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};
