@@ -55,8 +55,8 @@ function atrSeries(H, L, C, period) { return rmaSeries(trueRangeSeries(H, L, C),
 // ── Dynamic Key for CYAN based on 5-candle average close ────────────────────
 function getDynamicCyanKey(avgClose) {
   if (avgClose < 100) return 6;
-  if (avgClose < 120) return 7;
-  if (avgClose < 150) return 8;
+  if (avgClose < 140) return 7;
+  if (avgClose < 170) return 8;
   if (avgClose < 200) return 9;
   if (avgClose < 220) return 10;
   if (avgClose < 250) return 11;

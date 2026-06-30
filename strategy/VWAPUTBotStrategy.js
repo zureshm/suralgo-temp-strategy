@@ -51,8 +51,8 @@ function atrSeries(H, L, C, period) { return rmaSeries(trueRangeSeries(H, L, C),
 // ── Dynamic Key for CYAN based on premium (close price) ─────────────────────
 function getDynamicCyanKey(close) {
   if (close < 100) return 6;
-  if (close < 120) return 7;
-  if (close < 150) return 8;
+  if (close < 140) return 7;
+  if (close < 170) return 8;
   if (close < 200) return 9;
   if (close < 220) return 10;
   if (close < 250) return 11;
