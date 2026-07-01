@@ -12,11 +12,11 @@ const { superDoubleUT } = require("./strategy/superDoubleUT");
 const { utGptStrategy } = require("./strategy/UTGPTStrategy");
 const { utGptStrategy1 } = require("./strategy/UTGPTStrategy1");
 const { utGptStrategy2 } = require("./strategy/UTGPTStrategy2");
-const { utGptStrategy3 } = require("./strategy/UTGPTStrategy3");
+const { utGptStrategy3 : utGptStrategy3_RE } = require("./strategy/UTGPTStrategy3");
 const { VWAPUTBotStrategy: Shakunam_DY} = require("./strategy/VWAPUTBotStrategy");
 const { sumeshStrategy } = require("./strategy/SumeshStrategy");
-const { utGptStrategy4: ReEntry3410 } = require("./strategy/UTGPTStrategy4");
-const { utGptStrategy4X } = require("./strategy/UTGPTStrategy4X");
+const { utGptStrategy4: utGptStrategy4_RE } = require("./strategy/UTGPTStrategy4");
+const { utGptStrategy4X :utGptStrategy4X_RE } = require("./strategy/UTGPTStrategy4X");
 
 const app = express();
 
@@ -84,15 +84,15 @@ const strategies = {
   utGptStrategy,
   utGptStrategy1,
   utGptStrategy2,
-  utGptStrategy3,
+  utGptStrategy3_RE,
   Shakunam_DY,
   sumeshStrategy,
-  ReEntry3410,
-  utGptStrategy4X
+  utGptStrategy4_RE,
+  utGptStrategy4X_RE
 };
 
 // Active strategy (default)
-let activeStrategy = "ReEntry3410";
+let activeStrategy = "utGptStrategy4_RE";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};

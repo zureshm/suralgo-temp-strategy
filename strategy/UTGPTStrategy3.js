@@ -2,8 +2,10 @@
 // UTGPTStrategy3 — Simplified UTBOT Strategy
 // Uses only UTBOT with Key Value = 3, ATR Period = 10
 //
-// BUY: When UTBOT becomes bullish (flips to bullish)
-// SELL: When UTBOT becomes bearish (flips to bearish)
+// BUY:     When UTBOT becomes bullish (flips to bullish)
+// SELL:    When UTBOT becomes bearish (flips to bearish)
+// REENTER: UTBOT bullish + BLACK (K=1, ATR=10) flips bullish
+// REEXIT:  UTBOT bullish + BLACK (K=1, ATR=10) flips bearish
 // =============================================================================
 
 function trueRangeSeries(H, L, C) {
@@ -82,13 +84,16 @@ function utGptStrategy3(candles) {
   }
 
   const utbot = computeUTBot(candles, 3, 10);
+  const black = computeUTBot(candles, 1, 10);
 
   if (utbot.flippedBuy) {
     return {
       signal: "BUY",
       reason: "UTBOT bullish flip (K=3, ATR=10)",
       utbotPos: utbot.pos,
-      utbotTrail: utbot.trail
+      utbotTrail: utbot.trail,
+      blackPos: black.pos,
+      blackTrail: black.trail
     };
   }
 
@@ -97,14 +102,41 @@ function utGptStrategy3(candles) {
       signal: "SELL",
       reason: "UTBOT bearish flip (K=3, ATR=10)",
       utbotPos: utbot.pos,
-      utbotTrail: utbot.trail
+      utbotTrail: utbot.trail,
+      blackPos: black.pos,
+      blackTrail: black.trail
+    };
+  }
+
+  // ── REENTER/REEXIT: only when main UTBOT is bullish ──
+  if (utbot.pos === 1 && black.flippedBuy) {
+    return {
+      signal: "REENTER",
+      reason: "BLACK re-entry flip bullish (K1/ATR10) while UTBOT bullish",
+      utbotPos: utbot.pos,
+      utbotTrail: utbot.trail,
+      blackPos: black.pos,
+      blackTrail: black.trail
+    };
+  }
+
+  if (utbot.pos === 1 && black.flippedSell) {
+    return {
+      signal: "REEXIT",
+      reason: "BLACK re-exit flip bearish (K1/ATR10) while UTBOT bullish",
+      utbotPos: utbot.pos,
+      utbotTrail: utbot.trail,
+      blackPos: black.pos,
+      blackTrail: black.trail
     };
   }
 
   return {
     signal: "WAIT",
     utbotPos: utbot.pos,
-    utbotTrail: utbot.trail
+    utbotTrail: utbot.trail,
+    blackPos: black.pos,
+    blackTrail: black.trail
   };
 }
 

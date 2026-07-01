@@ -6,6 +6,7 @@
 //   - BLUE  = UT Bot 1: Key Value = 3, ATR Period = 20
 //   - GREEN = UT Bot 2: Key Value = 2, ATR Period = 14
 //   - CYAN  = UT Bot 3: Key Value = 3, ATR Period = 300
+//   - BLACK = UT Bot 4: Key Value = 1, ATR Period = 10  (re-entry/re-exit only)
 //
 // Supertrend: ST(10,4) for UT Bot conditions, ST(10,3) for chatGpt condition
 // chatGpt: EMA15/30
@@ -22,6 +23,9 @@
 //
 // SELL:
 //   ONLY Blue UT Bot flips bearish → SELL. Green/Cyan bearish ignored.
+//
+// REENTER: Blue bullish + BLACK flips bullish
+// REEXIT:  Blue bullish + BLACK flips bearish
 // =============================================================================
 
 // ── chatGpt helpers ──────────────────────────────────────────────────────────
@@ -230,7 +234,7 @@ function computeUTBot2(candles) {
 
 // ── UT Bot 3 / Cyan (Key=3, ATR=300) ────────────────────────────────────────
 
-function computeUTBot3(candles) {
+function computeUTBot3(candles) {  // eslint-disable-line no-unused-vars
   const H = candles.map(c => Number(c.high));
   const L = candles.map(c => Number(c.low));
   const C = candles.map(c => Number(c.close));
@@ -243,6 +247,49 @@ function computeUTBot3(candles) {
   for (let i = 1; i < N; i++) {
     if (atr300[i] == null) continue;
     const nLoss = 3 * atr300[i];
+    const prevTS = ts;
+
+    if (C[i] > prevTS && C[i - 1] > prevTS) {
+      ts = Math.max(prevTS, C[i] - nLoss);
+    } else if (C[i] < prevTS && C[i - 1] < prevTS) {
+      ts = Math.min(prevTS, C[i] + nLoss);
+    } else if (C[i] > prevTS) {
+      ts = C[i] - nLoss;
+    } else {
+      ts = C[i] + nLoss;
+    }
+
+    const prevPos = pos;
+    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
+    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
+
+    const buy = pos === 1 && prevPos !== 1;
+    const sell = pos === -1 && prevPos !== -1;
+
+    if (i === N - 1) {
+      flippedBuy = buy;
+      flippedSell = sell;
+    }
+  }
+
+  return { pos, flippedBuy, flippedSell, trail: ts };
+}
+
+// ── UT Bot 4 / Black (Key=1, ATR=10) ────────────────────────────────────────
+
+function computeUTBot4(candles) {
+  const H = candles.map(c => Number(c.high));
+  const L = candles.map(c => Number(c.low));
+  const C = candles.map(c => Number(c.close));
+  const N = C.length;
+  const atr10 = atrSeries(H, L, C, 10);
+
+  let ts = 0, pos = 0;
+  let flippedBuy = false, flippedSell = false;
+
+  for (let i = 1; i < N; i++) {
+    if (atr10[i] == null) continue;
+    const nLoss = 1 * atr10[i];
     const prevTS = ts;
 
     if (C[i] > prevTS && C[i - 1] > prevTS) {
@@ -297,6 +344,9 @@ function utGptStrategy4X(candles) {
   const ut3 = computeUTBot3(candles);
   const ut3Bullish = ut3.pos === 1;
 
+  // UT Bot 4 / Black (Key=1, ATR=10)
+  const ut4 = computeUTBot4(candles);
+
   // Supertrend(10, 4) — used by UT Bot BUY conditions
   const { supertrend: st4Line, direction: st4Dir } = supertrendSeries(H, L, C, 10, 4);
   const st4Last = st4Dir[st4Dir.length - 1];
@@ -348,6 +398,7 @@ function utGptStrategy4X(candles) {
     utBot1Pos: ut1.pos, utBot1Trail: ut1.trail,
     utBot2Pos: ut2.pos, utBot2Trail: ut2.trail,
     utBot3Pos: ut3.pos, utBot3Trail: ut3.trail,
+    utBot4Pos: ut4.pos, utBot4Trail: ut4.trail,
     st4Direction: st4Last,
     supertrend4: st4Line[st4Line.length - 1],
     st3Direction: st3Last,
@@ -390,6 +441,15 @@ function utGptStrategy4X(candles) {
   // ── BUY Path 4: chatGpt triggers + Blue & Green already bullish + ST(10,3) already bullish ──
   if (ut1Bullish && ut2Bullish && st3Bullish && chatGptJustTriggered) {
     return makeResult("BUY", "chatGpt trigger (EMA15>30) + Blue & Green bullish + ST(10,3) bullish");
+  }
+
+  // ── REENTER/REEXIT: only when Blue (ut1) is bullish ──
+  if (ut1Bullish && ut4.flippedBuy) {
+    return makeResult("REENTER", "BLACK re-entry flip bullish (K1/ATR10) while Blue bullish");
+  }
+
+  if (ut1Bullish && ut4.flippedSell) {
+    return makeResult("REEXIT", "BLACK re-exit flip bearish (K1/ATR10) while Blue bullish");
   }
 
   return makeResult("WAIT", "No signal");
