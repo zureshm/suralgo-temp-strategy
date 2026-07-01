@@ -15,7 +15,7 @@ const { utGptStrategy2 } = require("./strategy/UTGPTStrategy2");
 const { utGptStrategy3 } = require("./strategy/UTGPTStrategy3");
 const { VWAPUTBotStrategy: Shakunam_DY} = require("./strategy/VWAPUTBotStrategy");
 const { sumeshStrategy } = require("./strategy/SumeshStrategy");
-const { utGptStrategy4: Surukkuttan410_DY } = require("./strategy/UTGPTStrategy4");
+const { utGptStrategy4: ReEntry3410 } = require("./strategy/UTGPTStrategy4");
 const { utGptStrategy4X } = require("./strategy/UTGPTStrategy4X");
 
 const app = express();
@@ -87,12 +87,12 @@ const strategies = {
   utGptStrategy3,
   Shakunam_DY,
   sumeshStrategy,
-  Surukkuttan410_DY,
+  ReEntry3410,
   utGptStrategy4X
 };
 
 // Active strategy (default)
-let activeStrategy = "Surukkuttan410_DY";
+let activeStrategy = "ReEntry3410";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};
@@ -271,8 +271,8 @@ app.post("/evaluate", (req, res) => {
     activeStrategy
   };
 
-  // Sticky signal: don't let WAIT overwrite a previous BUY/SELL immediately,
-  // so the server-side trade engine has time to poll it via GET.
+  // Sticky signal: don't let WAIT overwrite a previous BUY/SELL/REENTER/REEXIT
+  // immediately, so the server-side trade engine has time to poll it via GET.
   // But expire the sticky signal after 3 candles to prevent stale activation.
   const prev = latestEvaluationBySymbol[symbol];
   if (result.signal !== "WAIT") {
@@ -283,7 +283,7 @@ app.post("/evaluate", (req, res) => {
     // Sticky signal expired (more than 3 candles old) — let WAIT through
     latestEvaluationBySymbol[symbol] = currentEval;
   }
-  // else: previous was BUY/SELL within 3 candles → keep it
+  // else: previous was BUY/SELL/REENTER/REEXIT within 3 candles → keep it
 
   console.log("New candle received for:", symbol);
   console.log("New candle received:", normalizedCandle);
