@@ -8,9 +8,8 @@
 //   - BLACK  (UT Bot 3): Key Value = 1, ATR Period = 10
 //   - VIOLET (UT Bot 4): Key Value = 1, ATR Period = 1
 //
-// BUY:      Either BLUE or GREEN becomes bullish.
+// BUY:      Either BLUE or GREEN becomes bullish, OR both are bullish and BLACK or VIOLET becomes bullish.
 // SELL:     Either BLUE or GREEN becomes bearish.
-// REENTER:  Both BLUE and GREEN are bullish, and BLACK or VIOLET becomes bullish.
 // REEXIT:   Both BLUE and GREEN are bullish, and BLACK becomes bearish.
 // =============================================================================
 
@@ -119,15 +118,15 @@ function utGptStrategy4X(candles) {
       else if (blueFlipBuy) reason = "BLUE flip bullish (K4/ATR10)";
       else reason = "GREEN flip bullish (K3/ATR10)";
     }
-    // ── REENTER (BLACK): both BLUE & GREEN bullish, BLACK flips bullish ──
+    // ── BUY (BLACK): both BLUE & GREEN bullish, BLACK flips bullish ──
     else if (blueBull && greenBull && blackFlipBuy) {
-      sig = "REENTER";
-      reason = "BLACK re-entry flip bullish (K1/ATR10) while BLUE & GREEN bullish";
+      sig = "BUY";
+      reason = "BLACK flip bullish (K1/ATR10) while BLUE & GREEN bullish";
     }
-    // ── REENTER (VIOLET): both BLUE & GREEN bullish, VIOLET flips bullish ──
+    // ── BUY (VIOLET): both BLUE & GREEN bullish, VIOLET flips bullish ──
     else if (blueBull && greenBull && violetFlipBuy) {
-      sig = "REENTER";
-      reason = "VIOLET re-entry flip bullish (K1/ATR1) while BLUE & GREEN bullish";
+      sig = "BUY";
+      reason = "VIOLET flip bullish (K1/ATR1) while BLUE & GREEN bullish";
     }
     // ── REEXIT: both BLUE & GREEN bullish, BLACK flips bearish ──
     else if (blueBull && greenBull && blackFlipSell) {

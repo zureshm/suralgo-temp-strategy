@@ -16,7 +16,7 @@ const { utGptStrategy3 : utGptStrategy3_RE } = require("./strategy/UTGPTStrategy
 const { VWAPUTBotStrategy: Shakunam_DY} = require("./strategy/VWAPUTBotStrategy");
 const { sumeshStrategy } = require("./strategy/SumeshStrategy");
 const { utGptStrategy4: utGptStrategy4_RE } = require("./strategy/UTGPTStrategy4");
-const { utGptStrategy4X :utGptStrategy4X_RE } = require("./strategy/UTGPTStrategy4X");
+const { utGptStrategy4X :utGptStrategy4X_AI } = require("./strategy/UTGPTStrategy4X");
 
 const app = express();
 
@@ -88,7 +88,7 @@ const strategies = {
   Shakunam_DY,
   sumeshStrategy,
   utGptStrategy4_RE,
-  utGptStrategy4X_RE
+  utGptStrategy4X_AI
 };
 
 // Active strategy (default)
