@@ -6,10 +6,11 @@
 //   - BLUE   (UT Bot 1): Key Value = 4, ATR Period = 10
 //   - GREEN  (UT Bot 2): Key Value = 3, ATR Period = 10
 //   - BLACK  (UT Bot 3): Key Value = 1, ATR Period = 10
-//   - VIOLET (UT Bot 4): Key Value = 1, ATR Period = 1
+//   - VIOLET (UT Bot 4): Key Value = 2, ATR Period = 10
 //
-// BUY:      Either BLUE or GREEN becomes bullish, OR both are bullish and BLACK or VIOLET becomes bullish.
+// BUY:      Either BLUE or GREEN becomes bullish, OR both are bullish and VIOLET becomes bullish.
 // SELL:     Either BLUE or GREEN becomes bearish.
+// REENTER:  Both BLUE and GREEN are bullish, and BLACK becomes bullish.
 // REEXIT:   Both BLUE and GREEN are bullish, and BLACK becomes bearish.
 // =============================================================================
 
@@ -84,7 +85,7 @@ function utGptStrategy4X(candles) {
   const blue   = utBotSeries(H, L, C, 4, 10); // BLUE   (Key=4, ATR=10)
   const green  = utBotSeries(H, L, C, 3, 10); // GREEN  (Key=3, ATR=10)
   const black  = utBotSeries(H, L, C, 1, 10); // BLACK  (Key=1, ATR=10)
-  const violet = utBotSeries(H, L, C, 1, 1);  // VIOLET (Key=1, ATR=1)
+  const violet = utBotSeries(H, L, C, 2, 10); // VIOLET (Key=2, ATR=10)
 
   let lastSignal = "WAIT", lastReason = "No signal";
 
@@ -118,15 +119,15 @@ function utGptStrategy4X(candles) {
       else if (blueFlipBuy) reason = "BLUE flip bullish (K4/ATR10)";
       else reason = "GREEN flip bullish (K3/ATR10)";
     }
-    // ── BUY (BLACK): both BLUE & GREEN bullish, BLACK flips bullish ──
+    // ── REENTER (BLACK): both BLUE & GREEN bullish, BLACK flips bullish ──
     else if (blueBull && greenBull && blackFlipBuy) {
-      sig = "BUY";
-      reason = "BLACK flip bullish (K1/ATR10) while BLUE & GREEN bullish";
+      sig = "REENTER";
+      reason = "BLACK re-entry flip bullish (K1/ATR10) while BLUE & GREEN bullish";
     }
     // ── BUY (VIOLET): both BLUE & GREEN bullish, VIOLET flips bullish ──
     else if (blueBull && greenBull && violetFlipBuy) {
       sig = "BUY";
-      reason = "VIOLET flip bullish (K1/ATR1) while BLUE & GREEN bullish";
+      reason = "VIOLET flip bullish (K2/ATR10) while BLUE & GREEN bullish";
     }
     // ── REEXIT: both BLUE & GREEN bullish, BLACK flips bearish ──
     else if (blueBull && greenBull && blackFlipSell) {

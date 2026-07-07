@@ -15,8 +15,8 @@ const { utGptStrategy2 } = require("./strategy/UTGPTStrategy2");
 const { utGptStrategy3 : utGptStrategy3_RE } = require("./strategy/UTGPTStrategy3");
 const { VWAPUTBotStrategy: Shakunam_DY} = require("./strategy/VWAPUTBotStrategy");
 const { sumeshStrategy } = require("./strategy/SumeshStrategy");
-const { utGptStrategy4: utGptStrategy4_RE } = require("./strategy/UTGPTStrategy4");
-const { utGptStrategy4X :utGptStrategy4X_AI } = require("./strategy/UTGPTStrategy4X");
+const { utGptStrategy4: utBotStrategy4_RE } = require("./strategy/UTGPTStrategy4");
+const { utGptStrategy4X :utBotStrategy4X_RE_AI } = require("./strategy/UTGPTStrategy4X");
 
 const app = express();
 
@@ -87,12 +87,12 @@ const strategies = {
   utGptStrategy3_RE,
   Shakunam_DY,
   sumeshStrategy,
-  utGptStrategy4_RE,
-  utGptStrategy4X_AI
+  utBotStrategy4_RE,
+  utBotStrategy4X_RE_AI
 };
 
 // Active strategy (default)
-let activeStrategy = "utGptStrategy4_RE";
+let activeStrategy = "utBotStrategy4X_RE_AI";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};
