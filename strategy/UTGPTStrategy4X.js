@@ -4,7 +4,7 @@
 //
 // INDICATORS & CONFIGURATION:
 //   - BLUE   (UT Bot 1): Key Value = 4, ATR Period = 10
-//   - GREEN  (UT Bot 2): Key Value = 3, ATR Period = 10
+//   - GREEN  (UT Bot 2): Key Value = 5, ATR Period = 10
 //   - BLACK  (UT Bot 3): Key Value = 1, ATR Period = 10
 //   - VIOLET (UT Bot 4): Key Value = 2, ATR Period = 10
 //
@@ -83,7 +83,7 @@ function utGptStrategy4X(candles) {
   const N = C.length;
 
   const blue   = utBotSeries(H, L, C, 4, 10); // BLUE   (Key=4, ATR=10)
-  const green  = utBotSeries(H, L, C, 3, 10); // GREEN  (Key=3, ATR=10)
+  const green  = utBotSeries(H, L, C, 5, 10); // GREEN  (Key=5, ATR=10)
   const black  = utBotSeries(H, L, C, 1, 10); // BLACK  (Key=1, ATR=10)
   const violet = utBotSeries(H, L, C, 2, 10); // VIOLET (Key=2, ATR=10)
 
@@ -108,16 +108,16 @@ function utGptStrategy4X(candles) {
     // ── SELL: either BLUE or GREEN flips bearish ──
     if (blueFlipSell || greenFlipSell) {
       sig = "SELL";
-      if (blueFlipSell && greenFlipSell) reason = "BLUE & GREEN both flip bearish (K4/ATR10 & K3/ATR10)";
+      if (blueFlipSell && greenFlipSell) reason = "BLUE & GREEN both flip bearish (K4/ATR10 & K5/ATR10)";
       else if (blueFlipSell) reason = "BLUE flip bearish (K4/ATR10)";
-      else reason = "GREEN flip bearish (K3/ATR10)";
+      else reason = "GREEN flip bearish (K5/ATR10)";
     }
     // ── BUY: either BLUE or GREEN flips bullish ──
     else if (blueFlipBuy || greenFlipBuy) {
       sig = "BUY";
-      if (blueFlipBuy && greenFlipBuy) reason = "BLUE & GREEN both flip bullish (K4/ATR10 & K3/ATR10)";
+      if (blueFlipBuy && greenFlipBuy) reason = "BLUE & GREEN both flip bullish (K4/ATR10 & K5/ATR10)";
       else if (blueFlipBuy) reason = "BLUE flip bullish (K4/ATR10)";
-      else reason = "GREEN flip bullish (K3/ATR10)";
+      else reason = "GREEN flip bullish (K5/ATR10)";
     }
     // ── REENTER (BLACK): both BLUE & GREEN bullish, BLACK flips bullish ──
     else if (blueBull && greenBull && blackFlipBuy) {
