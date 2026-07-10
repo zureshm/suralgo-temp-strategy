@@ -6,7 +6,7 @@
 //   - BLUE   (UT Bot 1): Key Value = 4, ATR Period = 10
 //   - GREEN  (UT Bot 2): Key Value = 5, ATR Period = 10
 //   - BLACK  (UT Bot 3): Key Value = 1, ATR Period = 10
-//   - VIOLET (UT Bot 4): Key Value = 2, ATR Period = 10
+//   - VIOLET (UT Bot 4): Key Value = 2, ATR Period = 300
 //
 // BUY:      Either BLUE or GREEN becomes bullish, OR both are bullish and VIOLET becomes bullish.
 // SELL:     Either BLUE or GREEN becomes bearish.
@@ -85,7 +85,7 @@ function utGptStrategy4X(candles) {
   const blue   = utBotSeries(H, L, C, 4, 10); // BLUE   (Key=4, ATR=10)
   const green  = utBotSeries(H, L, C, 5, 10); // GREEN  (Key=5, ATR=10)
   const black  = utBotSeries(H, L, C, 1, 10); // BLACK  (Key=1, ATR=10)
-  const violet = utBotSeries(H, L, C, 2, 10); // VIOLET (Key=2, ATR=10)
+  const violet = utBotSeries(H, L, C, 2, 300); // VIOLET (Key=2, ATR=300)
 
   let lastSignal = "WAIT", lastReason = "No signal";
 
@@ -127,7 +127,7 @@ function utGptStrategy4X(candles) {
     // ── BUY (VIOLET): both BLUE & GREEN bullish, VIOLET flips bullish ──
     else if (blueBull && greenBull && violetFlipBuy) {
       sig = "BUY";
-      reason = "VIOLET flip bullish (K2/ATR10) while BLUE & GREEN bullish";
+      reason = "VIOLET flip bullish (K2/ATR300) while BLUE & GREEN bullish";
     }
     // ── REEXIT: both BLUE & GREEN bullish, BLACK flips bearish ──
     else if (blueBull && greenBull && blackFlipSell) {
