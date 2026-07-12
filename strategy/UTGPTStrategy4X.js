@@ -11,6 +11,7 @@
 // BUY:      Either BLUE or GREEN becomes bullish.
 // SELL:     Either BLUE or GREEN or VIOLET becomes bearish.
 // REENTER:  Both BLUE and GREEN are bullish, and BLACK or VIOLET becomes bullish.
+//           VIOLET fires BUY instead of REENTER before 10AM or after 2PM IST.
 // REEXIT:   Both BLUE and GREEN are bullish, and BLACK becomes bearish.
 // =============================================================================
 
@@ -106,6 +107,16 @@ function utGptStrategy4X(candles) {
 
     const violetFlipSell = violet.pos[i] === -1 && violet.pos[i - 1] !== -1;
 
+    // Determine IST hour from candle time (before 10AM / after 2PM → VIOLET BUY)
+    let istHour = -1;
+    const ct = candles[i].time;
+    if (typeof ct === 'number') {
+      const ms = ct > 1e12 ? ct : ct * 1000;
+      istHour = new Date(ms + 5.5 * 3600 * 1000).getUTCHours();
+    } else if (ct) {
+      istHour = new Date(String(ct)).getHours();
+    }
+
     let sig = "WAIT", reason = "No signal";
 
     // ── SELL: either BLUE or GREEN or VIOLET flips bearish ──
@@ -128,10 +139,16 @@ function utGptStrategy4X(candles) {
       sig = "REENTER";
       reason = "BLACK re-entry flip bullish (K1/ATR10) while BLUE & GREEN bullish";
     }
-    // ── REENTER (VIOLET): BLUE & GREEN bullish, VIOLET flips bullish ──
+    // ── REENTER/BUY (VIOLET): BLUE & GREEN bullish, VIOLET flips bullish ──
+    // Before 10AM or after 2PM IST → BUY; between 10AM–2PM → REENTER
     else if (blueBull && greenBull && violetFlipBuy) {
-      sig = "REENTER";
-      reason = "VIOLET re-entry flip bullish (K2/ATR300) while BLUE & GREEN bullish";
+      if (istHour !== -1 && (istHour < 10 || istHour >= 14)) {
+        sig = "BUY";
+        reason = "VIOLET flip bullish (K2/ATR300) while BLUE & GREEN bullish (before 10AM/after 2PM → BUY)";
+      } else {
+        sig = "REENTER";
+        reason = "VIOLET re-entry flip bullish (K2/ATR300) while BLUE & GREEN bullish";
+      }
     }
     // ── REEXIT: both BLUE & GREEN bullish, BLACK flips bearish ──
     else if (blueBull && greenBull && blackFlipSell) {
