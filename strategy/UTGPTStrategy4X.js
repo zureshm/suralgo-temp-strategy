@@ -9,9 +9,9 @@
 //   - VIOLET (UT Bot 4): Key Value = 2, ATR Period = 300
 //
 // BUY:      Either BLUE or GREEN becomes bullish.
-// SELL:     Either BLUE or GREEN or VIOLET becomes bearish.
+// SELL:     Either BLUE or GREEN becomes bearish.
 // REENTER:  Both BLUE and GREEN are bullish, and BLACK or VIOLET becomes bullish.
-//           VIOLET fires BUY instead of REENTER before 10AM or after 2PM IST.
+//           VIOLET fires BUY instead of REENTER before 10AM or after 1PM IST.
 // REEXIT:   Both BLUE and GREEN are bullish, and BLACK becomes bearish.
 // =============================================================================
 
@@ -119,13 +119,12 @@ function utGptStrategy4X(candles) {
 
     let sig = "WAIT", reason = "No signal";
 
-    // ── SELL: either BLUE or GREEN or VIOLET flips bearish ──
-    if (blueFlipSell || greenFlipSell || violetFlipSell) {
+    // ── SELL: either BLUE or GREEN flips bearish ──
+    if (blueFlipSell || greenFlipSell) {
       sig = "SELL";
       if (blueFlipSell && greenFlipSell) reason = "BLUE & GREEN both flip bearish (K4/ATR10 & K3/ATR10)";
       else if (blueFlipSell) reason = "BLUE flip bearish (K4/ATR10)";
-      else if (greenFlipSell) reason = "GREEN flip bearish (K3/ATR10)";
-      else reason = "VIOLET flip bearish (K2/ATR300)";
+      else reason = "GREEN flip bearish (K3/ATR10)";
     }
     // ── BUY: either BLUE or GREEN flips bullish ──
     else if (blueFlipBuy || greenFlipBuy) {
@@ -140,11 +139,11 @@ function utGptStrategy4X(candles) {
       reason = "BLACK re-entry flip bullish (K1/ATR10) while BLUE & GREEN bullish";
     }
     // ── REENTER/BUY (VIOLET): BLUE & GREEN bullish, VIOLET flips bullish ──
-    // Before 10AM or after 2PM IST → BUY; between 10AM–2PM → REENTER
+    // Before 10AM or after 1PM IST → BUY; between 10AM–1PM → REENTER
     else if (blueBull && greenBull && violetFlipBuy) {
-      if (istHour !== -1 && (istHour < 10 || istHour >= 14)) {
+      if (istHour !== -1 && (istHour < 10 || istHour >= 13)) {
         sig = "BUY";
-        reason = "VIOLET flip bullish (K2/ATR300) while BLUE & GREEN bullish (before 10AM/after 2PM → BUY)";
+        reason = "VIOLET flip bullish (K2/ATR300) while BLUE & GREEN bullish (before 10AM/after 1PM → BUY)";
       } else {
         sig = "REENTER";
         reason = "VIOLET re-entry flip bullish (K2/ATR300) while BLUE & GREEN bullish";
