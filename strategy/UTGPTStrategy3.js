@@ -4,8 +4,8 @@
 //
 // BUY:     When UTBOT becomes bullish (flips to bullish)
 // SELL:    When UTBOT becomes bearish (flips to bearish)
-// REENTER: UTBOT bullish + BLACK (K=1, ATR=10) flips bullish
-// REEXIT:  UTBOT bullish + BLACK (K=1, ATR=10) flips bearish
+// REENTER: UTBOT bullish + BLACK (K=2, ATR=10) flips bullish
+// REEXIT:  UTBOT bullish + BLACK (K=2, ATR=10) flips bearish
 // =============================================================================
 
 function trueRangeSeries(H, L, C) {
@@ -84,7 +84,7 @@ function utGptStrategy3(candles) {
   }
 
   const utbot = computeUTBot(candles, 3, 10);
-  const black = computeUTBot(candles, 1, 10);
+  const black = computeUTBot(candles, 2, 10);
 
   if (utbot.flippedBuy) {
     return {
@@ -112,7 +112,7 @@ function utGptStrategy3(candles) {
   if (utbot.pos === 1 && black.flippedBuy) {
     return {
       signal: "REENTER",
-      reason: "BLACK re-entry flip bullish (K1/ATR10) while UTBOT bullish",
+      reason: "BLACK re-entry flip bullish (K2/ATR10) while UTBOT bullish",
       utbotPos: utbot.pos,
       utbotTrail: utbot.trail,
       blackPos: black.pos,
@@ -123,7 +123,7 @@ function utGptStrategy3(candles) {
   if (utbot.pos === 1 && black.flippedSell) {
     return {
       signal: "REEXIT",
-      reason: "BLACK re-exit flip bearish (K1/ATR10) while UTBOT bullish",
+      reason: "BLACK re-exit flip bearish (K2/ATR10) while UTBOT bullish",
       utbotPos: utbot.pos,
       utbotTrail: utbot.trail,
       blackPos: black.pos,
