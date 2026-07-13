@@ -1,10 +1,12 @@
 // =============================================================================
-// UTGPTStrategy2 — Triple UTBOT Strategy with Re-entry
+// UTGPTStrategy2 — Triple UTBOT Strategy with Re-entry (Heikin-Ashi)
 //
 // INDICATORS & CONFIGURATION:
 //   - GREEN (UT Bot 1): Key Value = 2, ATR Period = 10
 //   - BLUE  (UT Bot 2): Key Value = 3, ATR Period = 10
 //   - CYAN  (UT Bot 3): Key Value = 1, ATR Period = 10
+//
+// Candles are converted to Heikin-Ashi before UT Bot calculation.
 //
 // BUY:      BLUE flips bullish, OR BLUE & CYAN already bullish and GREEN flips bullish.
 // SELL:     Either BLUE or GREEN flips bearish.
@@ -74,9 +76,23 @@ function utGptStrategy2(candles) {
     return { signal: "WAIT", reason: "Not enough data (need 100+)" };
   }
 
-  const H = candles.map(c => Number(c.high));
-  const L = candles.map(c => Number(c.low));
-  const C = candles.map(c => Number(c.close));
+  // ── Convert to Heikin-Ashi ──
+  const ha = [];
+  for (let i = 0; i < candles.length; i++) {
+    const o = Number(candles[i].open);
+    const h = Number(candles[i].high);
+    const l = Number(candles[i].low);
+    const c = Number(candles[i].close);
+    const haClose = (o + h + l + c) / 4;
+    const haOpen  = i === 0 ? (o + c) / 2 : (ha[i - 1].open + ha[i - 1].close) / 2;
+    const haHigh  = Math.max(h, haOpen, haClose);
+    const haLow   = Math.min(l, haOpen, haClose);
+    ha.push({ open: haOpen, high: haHigh, low: haLow, close: haClose });
+  }
+
+  const H = ha.map(c => c.high);
+  const L = ha.map(c => c.low);
+  const C = ha.map(c => c.close);
   const N = C.length;
 
   const green = utBotSeries(H, L, C, 2, 10); // GREEN (Key=2, ATR=10)
