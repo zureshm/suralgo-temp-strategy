@@ -4,7 +4,7 @@
 // INDICATORS & CONFIGURATION:
 //   - BLUE  (UT Bot 1): Key Value = 4, ATR Period = 10
 //   - GREEN (UT Bot 2): Key Value = 3, ATR Period = 10
-//   - BLACK (UT Bot 3): Key Value = 1, ATR Period = 10
+//   - BLACK (UT Bot 3): Key Value = 2, ATR Period = 10
 //
 // BUY:    Either BLUE or GREEN becomes bullish.
 // SELL:   Either BLUE or GREEN becomes bearish.
@@ -82,7 +82,7 @@ function utGptStrategy4(candles) {
 
   const blue  = utBotSeries(H, L, C, 4, 10); // BLUE  (Key=4, ATR=10)
   const green = utBotSeries(H, L, C, 3, 10); // GREEN (Key=3, ATR=10)
-  const black = utBotSeries(H, L, C, 1, 10); // BLACK (Key=1, ATR=10)
+  const black = utBotSeries(H, L, C, 2, 10); // BLACK (Key=2, ATR=10)
 
   let lastSignal = "WAIT", lastReason = "No signal";
 
@@ -117,12 +117,12 @@ function utGptStrategy4(candles) {
     // ── REENTER: both BLUE & GREEN bullish, BLACK flips bullish ──
     else if (blueBull && greenBull && blackFlipBuy) {
       sig = "REENTER";
-      reason = "BLACK re-entry flip bullish (K1/ATR10) while BLUE & GREEN bullish";
+      reason = "BLACK re-entry flip bullish (K2/ATR10) while BLUE & GREEN bullish";
     }
     // ── REXIT: both BLUE & GREEN bullish, BLACK flips bearish ──
     else if (blueBull && greenBull && blackFlipSell) {
       sig = "REEXIT";
-      reason = "BLACK re-exit flip bearish (K1/ATR10) while BLUE & GREEN bullish";
+      reason = "BLACK re-exit flip bearish (K2/ATR10) while BLUE & GREEN bullish";
     }
 
     lastSignal = sig;

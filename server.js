@@ -11,7 +11,7 @@ const { superUTBotStrategy } = require("./strategy/superUTBotStrategy");
 const { superDoubleUT } = require("./strategy/superDoubleUT");
 const { utGptStrategy } = require("./strategy/UTGPTStrategy");
 const { utGptStrategy1 } = require("./strategy/UTGPTStrategy1");
-const { utGptStrategy2 } = require("./strategy/UTGPTStrategy2");
+const { utGptStrategy2 : utBotStrategy2_HEIKIN } = require("./strategy/UTGPTStrategy2");
 const { utGptStrategy3 : utGptStrategy3_RE } = require("./strategy/UTGPTStrategy3");
 const { VWAPUTBotStrategy: Shakunam_DY} = require("./strategy/VWAPUTBotStrategy");
 const { sumeshStrategy } = require("./strategy/SumeshStrategy");
@@ -83,7 +83,7 @@ const strategies = {
   superDoubleUT,
   utGptStrategy,
   utGptStrategy1,
-  utGptStrategy2,
+  utBotStrategy2_HEIKIN,
   utGptStrategy3_RE,
   Shakunam_DY,
   sumeshStrategy,
