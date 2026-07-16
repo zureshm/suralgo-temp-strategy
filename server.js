@@ -10,8 +10,8 @@ const { claudSurStrategy : Kumbhakarna_DY} = require("./strategy/claudSurStrateg
 const { superUTBotStrategy } = require("./strategy/superUTBotStrategy");
 const { superDoubleUT } = require("./strategy/superDoubleUT");
 const { utGptStrategy } = require("./strategy/UTGPTStrategy");
-const { utGptStrategy1 } = require("./strategy/UTGPTStrategy1");
-const { utGptStrategy2 : utBotStrategy2_HEIKIN } = require("./strategy/UTGPTStrategy2");
+const { utGptStrategy1 : HEIKIN_FREEFALL} = require("./strategy/UTGPTStrategy1");
+const { utGptStrategy2 : HEIKIN_RE } = require("./strategy/UTGPTStrategy2");
 const { utGptStrategy3 : utGptStrategy3_RE } = require("./strategy/UTGPTStrategy3");
 const { VWAPUTBotStrategy: Shakunam_DY} = require("./strategy/VWAPUTBotStrategy");
 const { sumeshStrategy } = require("./strategy/SumeshStrategy");
@@ -82,8 +82,8 @@ const strategies = {
   superUTBotStrategy,
   superDoubleUT,
   utGptStrategy,
-  utGptStrategy1,
-  utBotStrategy2_HEIKIN,
+  HEIKIN_FREEFALL,
+  HEIKIN_RE,
   utGptStrategy3_RE,
   Shakunam_DY,
   sumeshStrategy,
@@ -92,7 +92,7 @@ const strategies = {
 };
 
 // Active strategy (default)
-let activeStrategy = "utBotStrategy4X_RE_AI";
+let activeStrategy = "HEIKIN_FREEFALL";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};
