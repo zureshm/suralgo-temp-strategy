@@ -3,7 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 
-const { evaluateEMACross } = require("./strategy/evaluateEMACross");
+const { evaluateEMACross : NothingStrategy } = require("./strategy/evaluateEMACross");
 const { surStrategy } = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
 const { claudSurStrategy : Kumbhakarna_DY} = require("./strategy/claudSurStrategy");
@@ -75,7 +75,7 @@ const PORT = 4000;
 
 // Strategy map
 const strategies = {
-  evaluateEMACross,
+  NothingStrategy,
   surStrategy,
   chatGptStrategy,
   Kumbhakarna_DY,
