@@ -31,7 +31,7 @@ function evaluateEMACross(candles) {
 
   if (ema10_prev <= ema20_prev && ema10_now > ema20_now) {
     return {
-      signal: "BBB",
+      signal: "WAIT",
       ema10: ema10_now,
       ema20: ema20_now
     }
@@ -39,14 +39,14 @@ function evaluateEMACross(candles) {
 
   if (ema10_prev >= ema20_prev && ema10_now < ema20_now) {
     return {
-      signal: "SSS",
+      signal: "WAIT",
       ema10: ema10_now,
       ema20: ema20_now
     }
   }
 
   return {
-    signal: "WWW",
+    signal: "WAIT",
     ema10: ema10_now,
     ema20: ema20_now
   }
