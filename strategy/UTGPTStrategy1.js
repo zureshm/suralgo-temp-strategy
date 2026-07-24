@@ -105,6 +105,7 @@ function utGptStrategy1(candles) {
   const purple = utBotSeries(H, L, C, 1, 10); // PURPLE (Key=1, ATR=10)
 
   let lastSignal = "WAIT", lastReason = "No signal";
+  let trending = false;
 
   for (let i = 1; i < N; i++) {
     const blueBull  = blue.pos[i] === 1;
@@ -119,6 +120,11 @@ function utGptStrategy1(candles) {
     const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
 
     const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
+    const cyanBull   = cyan.pos[i] === 1;
+    const purpleBull = purple.pos[i] === 1;
+
+    // TRENDING: true when all 4 UT Bots are bullish on this candle
+    trending = blueBull && greenBull && cyanBull && purpleBull;
 
     let sig = "WAIT", reason = "No signal";
 
@@ -164,6 +170,7 @@ function utGptStrategy1(candles) {
   return {
     signal: lastSignal,
     reason: lastReason,
+    trending,
     greenPos: green.pos[N - 1],
     bluePos: blue.pos[N - 1],
     cyanPos: cyan.pos[N - 1],
