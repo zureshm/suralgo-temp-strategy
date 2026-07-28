@@ -9,7 +9,7 @@
 // Candles are converted to Heikin-Ashi before UT Bot calculation.
 //
 // BUY:      BLUE flips bullish.
-// SELL:     BLUE flips bearish.
+// SELL:     BLUE or GREEN flips bearish.
 // REENTER:  Both GREEN and BLUE are bullish, and CYAN becomes bullish.
 // REEXIT:   Both GREEN and BLUE are bullish, and CYAN becomes bearish.
 // =============================================================================
@@ -108,16 +108,20 @@ function utGptStrategy(candles) {
 
     const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
     const blueFlipSell  = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
+    const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
 
     const cyanFlipBuy   = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
     const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
 
     let sig = "WAIT", reason = "No signal";
 
-    // ── SELL: BLUE flips bearish ──
-    if (blueFlipSell) {
+    // ── SELL: BLUE or GREEN flips bearish ──
+    if (blueFlipSell || greenFlipSell) {
       sig = "SELL";
-      reason = "BLUE flip bearish (K3/ATR10)";
+      const flips = [];
+      if (blueFlipSell) flips.push("BLUE");
+      if (greenFlipSell) flips.push("GREEN");
+      reason = flips.join(" & ") + " flip bearish";
     }
     // ── BUY: BLUE flips bullish ──
     else if (blueFlipBuy) {
