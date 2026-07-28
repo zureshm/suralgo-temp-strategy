@@ -10,7 +10,8 @@
 //
 // BUY:      BLUE flips bullish.
 // SELL:     BLUE or GREEN flips bearish.
-// REENTER:  Both GREEN and BLUE are bullish, and CYAN becomes bullish.
+// REENTER:  BLUE already bullish and GREEN flips bullish,
+//           OR both GREEN and BLUE are bullish and CYAN flips bullish.
 // REEXIT:   Both GREEN and BLUE are bullish, and CYAN becomes bearish.
 // =============================================================================
 
@@ -101,17 +102,23 @@ function utGptStrategy(candles) {
   const cyan  = utBotSeries(H, L, C, 1, 10); // CYAN  (Key=1, ATR=10)
 
   let lastSignal = "WAIT", lastReason = "No signal";
+  let trending = false;
 
   for (let i = 1; i < N; i++) {
     const blueBull  = blue.pos[i] === 1;
     const greenBull = green.pos[i] === 1;
+    const cyanBull  = cyan.pos[i] === 1;
 
     const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
+    const greenFlipBuy  = green.pos[i] === 1 && green.pos[i - 1] !== 1;
     const blueFlipSell  = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
     const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
 
     const cyanFlipBuy   = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
     const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
+
+    // TRENDING: true when all 3 UT Bots are bullish on this candle
+    trending = blueBull && greenBull && cyanBull;
 
     let sig = "WAIT", reason = "No signal";
 
@@ -122,6 +129,11 @@ function utGptStrategy(candles) {
       if (blueFlipSell) flips.push("BLUE");
       if (greenFlipSell) flips.push("GREEN");
       reason = flips.join(" & ") + " flip bearish";
+    }
+    // ── REENTER: BLUE already bullish, GREEN flips bullish ──
+    else if (blueBull && greenFlipBuy) {
+      sig = "REENTER";
+      reason = "GREEN re-entry flip bullish (K2/ATR10) while BLUE bullish";
     }
     // ── BUY: BLUE flips bullish ──
     else if (blueFlipBuy) {
@@ -146,6 +158,7 @@ function utGptStrategy(candles) {
   return {
     signal: lastSignal,
     reason: lastReason,
+    trending,
     greenPos: green.pos[N - 1],
     bluePos: blue.pos[N - 1],
     cyanPos: cyan.pos[N - 1],
