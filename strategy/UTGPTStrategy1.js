@@ -12,7 +12,7 @@
 // BUY:      BLUE flips bullish,
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish.
-// SELL:     CYAN or GREEN or BLUE flips bearish.
+// SELL:     CYAN or GREEN or BLUE or PURPLE flips bearish.
 // REENTER:  Both GREEN and BLUE are bullish, and PURPLE becomes bullish.
 // REEXIT:   Both BLUE and GREEN are bullish, and CYAN becomes bearish.
 // =============================================================================
@@ -120,6 +120,7 @@ function utGptStrategy1(candles) {
     const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
 
     const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
+    const purpleFlipSell = purple.pos[i] === -1 && purple.pos[i - 1] !== -1;
     const cyanBull   = cyan.pos[i] === 1;
     const purpleBull = purple.pos[i] === 1;
 
@@ -133,13 +134,14 @@ function utGptStrategy1(candles) {
       sig = "REEXIT";
       reason = "CYAN re-exit flip bearish (K1/ATR10) while BLUE & GREEN bullish";
     }
-    // ── SELL: CYAN or GREEN or BLUE flips bearish ──
-    else if (cyanFlipSell || greenFlipSell || blueFlipSell) {
+    // ── SELL: CYAN or GREEN or BLUE or PURPLE flips bearish ──
+    else if (cyanFlipSell || greenFlipSell || blueFlipSell || purpleFlipSell) {
       sig = "SELL";
       const flips = [];
       if (cyanFlipSell) flips.push("CYAN");
       if (greenFlipSell) flips.push("GREEN");
       if (blueFlipSell) flips.push("BLUE");
+      if (purpleFlipSell) flips.push("PURPLE");
       reason = flips.join(" & ") + " flip bearish";
     }
     // ── BUY: BLUE flips bullish ──
