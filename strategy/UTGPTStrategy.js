@@ -4,7 +4,7 @@
 // INDICATORS & CONFIGURATION:
 //   - GREEN (UT Bot 1): Key Value = 2, ATR Period = 10
 //   - BLUE  (UT Bot 2): Key Value = 3, ATR Period = 10
-//   - CYAN  (UT Bot 3): Key Value = 1, ATR Period = 10
+//   - CYAN  (UT Bot 3): Key Value = 2, ATR Period = 300
 //
 // Candles are converted to Heikin-Ashi before UT Bot calculation.
 //
@@ -99,7 +99,7 @@ function utGptStrategy(candles) {
 
   const green = utBotSeries(H, L, C, 2, 10); // GREEN (Key=2, ATR=10)
   const blue  = utBotSeries(H, L, C, 3, 10); // BLUE  (Key=3, ATR=10)
-  const cyan  = utBotSeries(H, L, C, 1, 10); // CYAN  (Key=1, ATR=10)
+  const cyan  = utBotSeries(H, L, C, 2, 300); // CYAN  (Key=2, ATR=300)
 
   let lastSignal = "WAIT", lastReason = "No signal";
   let trending = false;
