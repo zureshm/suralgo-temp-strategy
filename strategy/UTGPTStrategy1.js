@@ -1,11 +1,12 @@
 // =============================================================================
-// UTGPTStrategy1 — Quad UT Bot Strategy (Heikin-Ashi)
+// UTGPTStrategy1 — Penta UT Bot Strategy (Heikin-Ashi)
 //
 // INDICATORS & CONFIGURATION:
 //   - GREEN  (UT Bot 1): Key Value = 2, ATR Period = 10
 //   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
 //   - CYAN   (UT Bot 3): Key Value = 2, ATR Period = 300
 //   - PURPLE (UT Bot 4): Key Value = 1, ATR Period = 10
+//   - TEAL   (UT Bot 5): Key Value = 1, ATR Period = 16
 //
 // Candles are converted to Heikin-Ashi before UT Bot calculation.
 //
@@ -14,7 +15,7 @@
 //           OR BLUE & GREEN already bullish and CYAN flips bullish.
 // SELL:     CYAN or GREEN or BLUE or PURPLE flips bearish.
 // REENTER:  Both GREEN and BLUE are bullish, and PURPLE becomes bullish.
-// REEXIT:   Both BLUE and GREEN are bullish, and PURPLE becomes bearish.
+// REEXIT:   Both BLUE and GREEN are bullish, and TEAL becomes bearish.
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -103,6 +104,7 @@ function utGptStrategy1(candles) {
   const blue   = utBotSeries(H, L, C, 3, 10); // BLUE   (Key=3, ATR=10)
   const cyan   = utBotSeries(H, L, C, 2, 300); // CYAN   (Key=2, ATR=300)
   const purple = utBotSeries(H, L, C, 1, 10); // PURPLE (Key=1, ATR=10)
+  const teal   = utBotSeries(H, L, C, 1, 16); // TEAL   (Key=1, ATR=16)
 
   let lastSignal = "WAIT", lastReason = "No signal";
   let trending = false;
@@ -121,6 +123,7 @@ function utGptStrategy1(candles) {
 
     const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
     const purpleFlipSell = purple.pos[i] === -1 && purple.pos[i - 1] !== -1;
+    const tealFlipSell   = teal.pos[i] === -1 && teal.pos[i - 1] !== -1;
     const cyanBull   = cyan.pos[i] === 1;
     const purpleBull = purple.pos[i] === 1;
 
@@ -129,10 +132,10 @@ function utGptStrategy1(candles) {
 
     let sig = "WAIT", reason = "No signal";
 
-    // ── REEXIT: BLUE & GREEN bullish, PURPLE flips bearish (checked before SELL) ──
-    if (blueBull && greenBull && purpleFlipSell) {
+    // ── REEXIT: BLUE & GREEN bullish, TEAL flips bearish (checked before SELL) ──
+    if (blueBull && greenBull && tealFlipSell) {
       sig = "REEXIT";
-      reason = "PURPLE re-exit flip bearish (K1/ATR10) while BLUE & GREEN bullish";
+      reason = "TEAL re-exit flip bearish (K1/ATR16) while BLUE & GREEN bullish";
     }
     // ── SELL: CYAN or GREEN or BLUE or PURPLE flips bearish ──
     else if (cyanFlipSell || greenFlipSell || blueFlipSell || purpleFlipSell) {
@@ -181,6 +184,8 @@ function utGptStrategy1(candles) {
     blueTrail: blue.trail[N - 1],
     cyanTrail: cyan.trail[N - 1],
     purpleTrail: purple.trail[N - 1],
+    tealPos: teal.pos[N - 1],
+    tealTrail: teal.trail[N - 1],
     close: C[N - 1]
   };
 }
