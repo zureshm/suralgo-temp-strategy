@@ -14,7 +14,7 @@
 //           OR BLUE & GREEN already bullish and CYAN flips bullish.
 // SELL:     CYAN or GREEN or BLUE or PURPLE flips bearish.
 // REENTER:  Both GREEN and BLUE are bullish, and PURPLE becomes bullish.
-// REEXIT:   Both BLUE and GREEN are bullish, and CYAN becomes bearish.
+// REEXIT:   Both BLUE and GREEN are bullish, and PURPLE becomes bearish.
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -129,10 +129,10 @@ function utGptStrategy1(candles) {
 
     let sig = "WAIT", reason = "No signal";
 
-    // ── REEXIT: BLUE & GREEN bullish, CYAN flips bearish (checked before SELL) ──
-    if (blueBull && greenBull && cyanFlipSell) {
+    // ── REEXIT: BLUE & GREEN bullish, PURPLE flips bearish (checked before SELL) ──
+    if (blueBull && greenBull && purpleFlipSell) {
       sig = "REEXIT";
-      reason = "CYAN re-exit flip bearish (K1/ATR10) while BLUE & GREEN bullish";
+      reason = "PURPLE re-exit flip bearish (K1/ATR10) while BLUE & GREEN bullish";
     }
     // ── SELL: CYAN or GREEN or BLUE or PURPLE flips bearish ──
     else if (cyanFlipSell || greenFlipSell || blueFlipSell || purpleFlipSell) {
