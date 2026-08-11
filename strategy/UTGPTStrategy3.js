@@ -86,17 +86,6 @@ function utGptStrategy3(candles) {
   const utbot = computeUTBot(candles, 3, 10);
   const black = computeUTBot(candles, 2, 10);
 
-  if (utbot.flippedBuy) {
-    return {
-      signal: "BUY",
-      reason: "UTBOT bullish flip (K=3, ATR=10)",
-      utbotPos: utbot.pos,
-      utbotTrail: utbot.trail,
-      blackPos: black.pos,
-      blackTrail: black.trail
-    };
-  }
-
   if (utbot.flippedSell) {
     return {
       signal: "SELL",
@@ -108,11 +97,11 @@ function utGptStrategy3(candles) {
     };
   }
 
-  // ── REENTER/REEXIT: only when main UTBOT is bullish ──
-  if (utbot.pos === 1 && black.flippedBuy) {
+  // ── REEXIT: only when main UTBOT is bullish ──
+  if (utbot.pos === 1 && black.flippedSell) {
     return {
-      signal: "REENTER",
-      reason: "BLACK re-entry flip bullish (K2/ATR10) while UTBOT bullish",
+      signal: "REEXIT",
+      reason: "BLACK re-exit flip bearish (K2/ATR10) while UTBOT bullish",
       utbotPos: utbot.pos,
       utbotTrail: utbot.trail,
       blackPos: black.pos,
@@ -120,10 +109,22 @@ function utGptStrategy3(candles) {
     };
   }
 
-  if (utbot.pos === 1 && black.flippedSell) {
+  if (utbot.flippedBuy) {
     return {
-      signal: "REEXIT",
-      reason: "BLACK re-exit flip bearish (K2/ATR10) while UTBOT bullish",
+      signal: "BUY",
+      reason: "UTBOT bullish flip (K=3, ATR=10)",
+      utbotPos: utbot.pos,
+      utbotTrail: utbot.trail,
+      blackPos: black.pos,
+      blackTrail: black.trail
+    };
+  }
+
+  // ── REENTER: only when main UTBOT is bullish ──
+  if (utbot.pos === 1 && black.flippedBuy) {
+    return {
+      signal: "REENTER",
+      reason: "BLACK re-entry flip bullish (K2/ATR10) while UTBOT bullish",
       utbotPos: utbot.pos,
       utbotTrail: utbot.trail,
       blackPos: black.pos,

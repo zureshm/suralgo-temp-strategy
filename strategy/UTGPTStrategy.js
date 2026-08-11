@@ -130,6 +130,11 @@ function utGptStrategy(candles) {
       if (greenFlipSell) flips.push("GREEN");
       reason = flips.join(" & ") + " flip bearish";
     }
+    // ── REEXIT: GREEN & BLUE bullish, CYAN flips bearish ──
+    else if (greenBull && blueBull && cyanFlipSell) {
+      sig = "REEXIT";
+      reason = "CYAN re-exit flip bearish (K2/ATR300) while GREEN & BLUE bullish";
+    }
     // ── REENTER: BLUE already bullish, GREEN flips bullish ──
     else if (blueBull && greenFlipBuy) {
       sig = "REENTER";
@@ -143,12 +148,7 @@ function utGptStrategy(candles) {
     // ── REENTER: GREEN & BLUE bullish, CYAN flips bullish ──
     else if (greenBull && blueBull && cyanFlipBuy) {
       sig = "REENTER";
-      reason = "CYAN re-entry flip bullish (K1/ATR10) while GREEN & BLUE bullish";
-    }
-    // ── REEXIT: GREEN & BLUE bullish, CYAN flips bearish ──
-    else if (greenBull && blueBull && cyanFlipSell) {
-      sig = "REEXIT";
-      reason = "CYAN re-exit flip bearish (K1/ATR10) while GREEN & BLUE bullish";
+      reason = "CYAN re-entry flip bullish (K2/ATR300) while GREEN & BLUE bullish";
     }
 
     lastSignal = sig;

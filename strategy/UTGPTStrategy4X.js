@@ -126,6 +126,11 @@ function utGptStrategy4X(candles) {
       else if (blueFlipSell) reason = "BLUE flip bearish (K4/ATR10)";
       else reason = "GREEN flip bearish (K3/ATR10)";
     }
+    // ── REEXIT: both BLUE & GREEN bullish, BLACK flips bearish ──
+    else if (blueBull && greenBull && blackFlipSell) {
+      sig = "REEXIT";
+      reason = "BLACK re-exit flip bearish (K1/ATR10) while BLUE & GREEN bullish";
+    }
     // ── BUY: either BLUE or GREEN flips bullish ──
     else if (blueFlipBuy || greenFlipBuy) {
       sig = "BUY";
@@ -148,11 +153,6 @@ function utGptStrategy4X(candles) {
         sig = "REENTER";
         reason = "VIOLET re-entry flip bullish (K2/ATR300) while BLUE & GREEN bullish";
       }
-    }
-    // ── REEXIT: both BLUE & GREEN bullish, BLACK flips bearish ──
-    else if (blueBull && greenBull && blackFlipSell) {
-      sig = "REEXIT";
-      reason = "BLACK re-exit flip bearish (K1/ATR10) while BLUE & GREEN bullish";
     }
 
     lastSignal = sig;

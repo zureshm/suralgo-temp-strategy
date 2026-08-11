@@ -100,29 +100,29 @@ function utGptStrategy4(candles) {
 
     let sig = "WAIT", reason = "No signal";
 
-    // ── BUY: either BLUE or GREEN flips bullish ──
-    if (blueFlipBuy || greenFlipBuy) {
-      sig = "BUY";
-      if (blueFlipBuy && greenFlipBuy) reason = "BLUE & GREEN both flip bullish (K4/ATR10 & K3/ATR10)";
-      else if (blueFlipBuy) reason = "BLUE flip bullish (K4/ATR10)";
-      else reason = "GREEN flip bullish (K3/ATR10)";
-    }
     // ── SELL: either BLUE or GREEN flips bearish ──
-    else if (blueFlipSell || greenFlipSell) {
+    if (blueFlipSell || greenFlipSell) {
       sig = "SELL";
       if (blueFlipSell && greenFlipSell) reason = "BLUE & GREEN both flip bearish (K4/ATR10 & K3/ATR10)";
       else if (blueFlipSell) reason = "BLUE flip bearish (K4/ATR10)";
       else reason = "GREEN flip bearish (K3/ATR10)";
     }
+    // ── REEXIT: both BLUE & GREEN bullish, BLACK flips bearish ──
+    else if (blueBull && greenBull && blackFlipSell) {
+      sig = "REEXIT";
+      reason = "BLACK re-exit flip bearish (K2/ATR10) while BLUE & GREEN bullish";
+    }
+    // ── BUY: either BLUE or GREEN flips bullish ──
+    else if (blueFlipBuy || greenFlipBuy) {
+      sig = "BUY";
+      if (blueFlipBuy && greenFlipBuy) reason = "BLUE & GREEN both flip bullish (K4/ATR10 & K3/ATR10)";
+      else if (blueFlipBuy) reason = "BLUE flip bullish (K4/ATR10)";
+      else reason = "GREEN flip bullish (K3/ATR10)";
+    }
     // ── REENTER: both BLUE & GREEN bullish, BLACK flips bullish ──
     else if (blueBull && greenBull && blackFlipBuy) {
       sig = "REENTER";
       reason = "BLACK re-entry flip bullish (K2/ATR10) while BLUE & GREEN bullish";
-    }
-    // ── REXIT: both BLUE & GREEN bullish, BLACK flips bearish ──
-    else if (blueBull && greenBull && blackFlipSell) {
-      sig = "REEXIT";
-      reason = "BLACK re-exit flip bearish (K2/ATR10) while BLUE & GREEN bullish";
     }
 
     lastSignal = sig;
