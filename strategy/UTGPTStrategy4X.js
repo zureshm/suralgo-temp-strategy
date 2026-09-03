@@ -1,18 +1,25 @@
 // =============================================================================
-// UTGPTStrategy4X — Quad UTBOT Strategy with Re-entry / Re-exit
-// Upgrade of UTGPTStrategy4 with added VIOLET UT Bot for extra REENTER.
+// UTGPTStrategy4X — Quad UT Bot Strategy with EMA-gated Re-entry (Heikin-Ashi)
 //
 // INDICATORS & CONFIGURATION:
-//   - BLUE   (UT Bot 1): Key Value = 4, ATR Period = 10
-//   - GREEN  (UT Bot 2): Key Value = 3, ATR Period = 10
-//   - BLACK  (UT Bot 3): Key Value = 1, ATR Period = 10
-//   - VIOLET (UT Bot 4): Key Value = 2, ATR Period = 300
+//   - GREEN  (UT Bot 1): Key Value = 2, ATR Period = 10
+//   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
+//   - CYAN   (UT Bot 3): Key Value = 2, ATR Period = 300
+//   - PURPLE (UT Bot 4): Key Value = 1, ATR Period = 10
+//   - 10EMA and 30EMA calculated on Heikin-Ashi close.
 //
-// BUY:      Either BLUE or GREEN becomes bullish.
-// SELL:     Either BLUE or GREEN becomes bearish.
-// REENTER:  Both BLUE and GREEN are bullish, and BLACK or VIOLET becomes bullish.
-//           VIOLET fires BUY instead of REENTER before 10AM or after 1PM IST.
-// REEXIT:   Both BLUE and GREEN are bullish, and BLACK becomes bearish.
+// Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
+//
+// BUY:      BLUE flips bullish,
+//           OR BLUE already bullish and GREEN flips bullish,
+//           OR BLUE & GREEN already bullish and CYAN flips bullish.
+// SELL:     CYAN or GREEN or BLUE or PURPLE flips bearish.
+// REENTER:  Both GREEN and BLUE are bullish, and PURPLE becomes bullish,
+//           AND 10EMA is already above 30EMA (upward cross has occurred),
+//           AND the PURPLE flip candle's HA low is not below 30EMA
+//           (2-point tolerance: if HA low is within 2 points below 30EMA,
+//            it is still accepted; more than 2 points below → no REENTER).
+// REEXIT:   Removed (TEAL UT Bot removed).
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -37,6 +44,18 @@ function rmaSeries(src, period) {
 }
 
 function atrSeries(H, L, C, period) { return rmaSeries(trueRangeSeries(H, L, C), period); }
+
+// ── EMA (Exponential Moving Average) ─────────────────────────────────────────
+function emaSeries(src, period) {
+  const out = new Array(src.length).fill(null);
+  if (src.length < period) return out;
+  const k = 2 / (period + 1);
+  let s = 0;
+  for (let i = 0; i < period; i++) s += src[i];
+  out[period - 1] = s / period;
+  for (let i = period; i < src.length; i++) out[i] = src[i] * k + out[i - 1] * (1 - k);
+  return out;
+}
 
 // ── Standard UT Bot (fixed key) ─────────────────────────────────────────────
 function utBotSeries(H, L, C, keyValue, atrPeriod) {
@@ -78,81 +97,95 @@ function utGptStrategy4X(candles) {
     return { signal: "WAIT", reason: "Not enough data (need 100+)" };
   }
 
-  const H = candles.map(c => Number(c.high));
-  const L = candles.map(c => Number(c.low));
-  const C = candles.map(c => Number(c.close));
+  // ── Convert to Heikin-Ashi ──
+  const ha = [];
+  for (let i = 0; i < candles.length; i++) {
+    const o = Number(candles[i].open);
+    const h = Number(candles[i].high);
+    const l = Number(candles[i].low);
+    const c = Number(candles[i].close);
+    const haClose = (o + h + l + c) / 4;
+    const haOpen  = i === 0 ? (o + c) / 2 : (ha[i - 1].open + ha[i - 1].close) / 2;
+    const haHigh  = Math.max(h, haOpen, haClose);
+    const haLow   = Math.min(l, haOpen, haClose);
+    ha.push({ open: haOpen, high: haHigh, low: haLow, close: haClose });
+  }
+
+  const H = ha.map(c => c.high);
+  const L = ha.map(c => c.low);
+  const C = ha.map(c => c.close);
   const N = C.length;
 
-  const blue   = utBotSeries(H, L, C, 4, 10); // BLUE   (Key=4, ATR=10)
-  const green  = utBotSeries(H, L, C, 3, 10); // GREEN  (Key=3, ATR=10)
-  const black  = utBotSeries(H, L, C, 1, 10); // BLACK  (Key=1, ATR=10)
-  const violet = utBotSeries(H, L, C, 2, 300); // VIOLET (Key=2, ATR=300)
+  const green  = utBotSeries(H, L, C, 2, 10); // GREEN  (Key=2, ATR=10)
+  const blue   = utBotSeries(H, L, C, 3, 10); // BLUE   (Key=3, ATR=10)
+  const cyan   = utBotSeries(H, L, C, 2, 300); // CYAN   (Key=2, ATR=300)
+  const purple = utBotSeries(H, L, C, 1, 10); // PURPLE (Key=1, ATR=10)
+
+  const ema10 = emaSeries(C, 10); // 10EMA on Heikin-Ashi close
+  const ema30 = emaSeries(C, 30); // 30EMA on Heikin-Ashi close
 
   let lastSignal = "WAIT", lastReason = "No signal";
+  let trending = false;
 
   for (let i = 1; i < N; i++) {
-    const blueBull   = blue.pos[i] === 1;
-    const greenBull  = green.pos[i] === 1;
-    const violetBull = violet.pos[i] === 1;
+    const blueBull  = blue.pos[i] === 1;
+    const greenBull = green.pos[i] === 1;
 
-    const blueFlipBuy  = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
-    const greenFlipBuy = green.pos[i] === 1 && green.pos[i - 1] !== 1;
+    const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
+    const greenFlipBuy  = green.pos[i] === 1 && green.pos[i - 1] !== 1;
+    const cyanFlipBuy   = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
+
     const blueFlipSell  = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
     const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
+    const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
 
-    const blackFlipBuy  = black.pos[i] === 1 && black.pos[i - 1] !== 1;
-    const blackFlipSell = black.pos[i] === -1 && black.pos[i - 1] !== -1;
+    const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
+    const purpleFlipSell = purple.pos[i] === -1 && purple.pos[i - 1] !== -1;
+    const cyanBull   = cyan.pos[i] === 1;
+    const purpleBull = purple.pos[i] === 1;
 
-    const violetFlipBuy  = violet.pos[i] === 1 && violet.pos[i - 1] !== 1;
+    // EMA values for this candle
+    const e10 = ema10[i];
+    const e30 = ema30[i];
+    const emaCrossedUp = e10 != null && e30 != null && e10 > e30;
+    const haLowVsEma30 = e30 != null ? L[i] >= (e30 - 2) : false; // 2-point tolerance
 
-    const violetFlipSell = violet.pos[i] === -1 && violet.pos[i - 1] !== -1;
-
-    // Determine IST hour from candle time (before 10AM / after 2PM → VIOLET BUY)
-    let istHour = -1;
-    const ct = candles[i].time;
-    if (typeof ct === 'number') {
-      const ms = ct > 1e12 ? ct : ct * 1000;
-      istHour = new Date(ms + 5.5 * 3600 * 1000).getUTCHours();
-    } else if (ct) {
-      istHour = new Date(String(ct)).getHours();
-    }
+    // TRENDING: true when all 4 UT Bots are bullish on this candle
+    trending = blueBull && greenBull && cyanBull && purpleBull;
 
     let sig = "WAIT", reason = "No signal";
 
-    // ── SELL: either BLUE or GREEN flips bearish ──
-    if (blueFlipSell || greenFlipSell) {
+    // ── SELL: CYAN or GREEN or BLUE or PURPLE flips bearish (checked first) ──
+    if (cyanFlipSell || greenFlipSell || blueFlipSell || purpleFlipSell) {
       sig = "SELL";
-      if (blueFlipSell && greenFlipSell) reason = "BLUE & GREEN both flip bearish (K4/ATR10 & K3/ATR10)";
-      else if (blueFlipSell) reason = "BLUE flip bearish (K4/ATR10)";
-      else reason = "GREEN flip bearish (K3/ATR10)";
+      const flips = [];
+      if (cyanFlipSell) flips.push("CYAN");
+      if (greenFlipSell) flips.push("GREEN");
+      if (blueFlipSell) flips.push("BLUE");
+      if (purpleFlipSell) flips.push("PURPLE");
+      reason = flips.join(" & ") + " flip bearish";
     }
-    // ── REEXIT: both BLUE & GREEN bullish, BLACK flips bearish ──
-    else if (blueBull && greenBull && blackFlipSell) {
-      sig = "REEXIT";
-      reason = "BLACK re-exit flip bearish (K1/ATR10) while BLUE & GREEN bullish";
-    }
-    // ── BUY: either BLUE or GREEN flips bullish ──
-    else if (blueFlipBuy || greenFlipBuy) {
+    // ── BUY: BLUE flips bullish ──
+    else if (blueFlipBuy) {
       sig = "BUY";
-      if (blueFlipBuy && greenFlipBuy) reason = "BLUE & GREEN both flip bullish (K4/ATR10 & K3/ATR10)";
-      else if (blueFlipBuy) reason = "BLUE flip bullish (K4/ATR10)";
-      else reason = "GREEN flip bullish (K3/ATR10)";
+      reason = "BLUE flip bullish (K3/ATR10)";
     }
-    // ── REENTER (BLACK): BLUE & GREEN bullish, BLACK flips bullish ──
-    else if (blueBull && greenBull && blackFlipBuy) {
+    // ── BUY: BLUE already bullish, GREEN flips bullish ──
+    else if (blueBull && greenFlipBuy) {
+      sig = "BUY";
+      reason = "GREEN flip bullish (K2/ATR10) while BLUE bullish";
+    }
+    // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish ──
+    else if (blueBull && greenBull && cyanFlipBuy) {
+      sig = "BUY";
+      reason = "CYAN flip bullish (K1/ATR10) while BLUE & GREEN bullish";
+    }
+    // ── REENTER: BLUE & GREEN bullish, PURPLE flips bullish ──
+    //           + 10EMA above 30EMA (upward cross already occurred)
+    //           + PURPLE flip candle HA low not below 30EMA (2-point tolerance)
+    else if (blueBull && greenBull && purpleFlipBuy && emaCrossedUp && haLowVsEma30) {
       sig = "REENTER";
-      reason = "BLACK re-entry flip bullish (K1/ATR10) while BLUE & GREEN bullish";
-    }
-    // ── REENTER/BUY (VIOLET): BLUE & GREEN bullish, VIOLET flips bullish ──
-    // Before 10AM or after 1PM IST → BUY; between 10AM–1PM → REENTER
-    else if (blueBull && greenBull && violetFlipBuy) {
-      if (istHour !== -1 && (istHour < 10 || istHour >= 13)) {
-        sig = "BUY";
-        reason = "VIOLET flip bullish (K2/ATR300) while BLUE & GREEN bullish (before 10AM/after 1PM → BUY)";
-      } else {
-        sig = "REENTER";
-        reason = "VIOLET re-entry flip bullish (K2/ATR300) while BLUE & GREEN bullish";
-      }
+      reason = "PURPLE re-entry flip bullish (K1/ATR10) while BLUE & GREEN bullish, 10EMA>30EMA, HA low above 30EMA";
     }
 
     lastSignal = sig;
@@ -162,14 +195,17 @@ function utGptStrategy4X(candles) {
   return {
     signal: lastSignal,
     reason: lastReason,
-    bluePos: blue.pos[N - 1],
-    blueTrail: blue.trail[N - 1],
+    trending,
     greenPos: green.pos[N - 1],
+    bluePos: blue.pos[N - 1],
+    cyanPos: cyan.pos[N - 1],
+    purplePos: purple.pos[N - 1],
     greenTrail: green.trail[N - 1],
-    blackPos: black.pos[N - 1],
-    blackTrail: black.trail[N - 1],
-    violetPos: violet.pos[N - 1],
-    violetTrail: violet.trail[N - 1],
+    blueTrail: blue.trail[N - 1],
+    cyanTrail: cyan.trail[N - 1],
+    purpleTrail: purple.trail[N - 1],
+    ema10: ema10[N - 1],
+    ema30: ema30[N - 1],
     close: C[N - 1]
   };
 }
