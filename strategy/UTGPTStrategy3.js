@@ -1,143 +1,114 @@
 // =============================================================================
-// UTGPTStrategy3 — Simplified UTBOT Strategy
-// Uses only UTBOT with Key Value = 3, ATR Period = 10
+// UTGPTStrategy3 — Heikin-Ashi Candle Pattern Strategy (No UT Bots)
 //
-// BUY:     When UTBOT becomes bullish (flips to bullish)
-// SELL:    When UTBOT becomes bearish (flips to bearish)
-// REENTER: UTBOT bullish + BLACK (K=2, ATR=10) flips bullish
-// REEXIT:  UTBOT bullish + BLACK (K=2, ATR=10) flips bearish
+// Candles are converted to Heikin-Ashi before evaluation.
+//
+// BUY:      A series of consecutive green HA candles (no red HA candles
+//           in between), where at least 3 of those green candles have:
+//             - Height (HA high - HA low) >= 3% of the candle's HA close.
+//             - No bottom wick (HA low === HA open).
+//           Example: if price is 100, 3% = 3 points. If price is 200,
+//           3% = 6 points. At least 3 qualifying candles → BUY.
+//           Signal fires on the candle where the 3rd qualifying candle
+//           completes, triggering a buy at the start of the next candle.
+//
+// SELL:     3 consecutive red HA candles, with at least 1 of those
+//           candles having height >= 3% of its HA close price.
 // =============================================================================
 
-function trueRangeSeries(H, L, C) {
-  const tr = [];
-  for (let i = 0; i < C.length; i++) {
-    if (i === 0) { tr.push(H[i] - L[i]); continue; }
-    tr.push(Math.max(
-      H[i] - L[i],
-      Math.abs(H[i] - C[i - 1]),
-      Math.abs(L[i] - C[i - 1])
-    ));
-  }
-  return tr;
-}
-
-function rmaSeries(src, period) {
-  const out = new Array(src.length).fill(null);
-  if (src.length < period) return out;
-  let s = 0;
-  for (let i = 0; i < period; i++) s += src[i];
-  out[period - 1] = s / period;
-  for (let i = period; i < src.length; i++) {
-    out[i] = (out[i - 1] * (period - 1) + src[i]) / period;
-  }
-  return out;
-}
-
-function atrSeries(H, L, C, period) {
-  return rmaSeries(trueRangeSeries(H, L, C), period);
-}
-
-function computeUTBot(candles, keyValue, atrPeriod) {
-  const H = candles.map(c => Number(c.high));
-  const L = candles.map(c => Number(c.low));
-  const C = candles.map(c => Number(c.close));
-  const N = C.length;
-  const atr = atrSeries(H, L, C, atrPeriod);
-
-  let ts = 0, pos = 0;
-  let flippedBuy = false, flippedSell = false;
-
-  for (let i = 1; i < N; i++) {
-    if (atr[i] == null) continue;
-    const nLoss = keyValue * atr[i];
-    const prevTS = ts;
-
-    if (C[i] > prevTS && C[i - 1] > prevTS) {
-      ts = Math.max(prevTS, C[i] - nLoss);
-    } else if (C[i] < prevTS && C[i - 1] < prevTS) {
-      ts = Math.min(prevTS, C[i] + nLoss);
-    } else if (C[i] > prevTS) {
-      ts = C[i] - nLoss;
-    } else {
-      ts = C[i] + nLoss;
-    }
-
-    const prevPos = pos;
-    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
-    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
-
-    const buy = pos === 1 && prevPos !== 1;
-    const sell = pos === -1 && prevPos !== -1;
-
-    if (i === N - 1) {
-      flippedBuy = buy;
-      flippedSell = sell;
-    }
-  }
-
-  return { pos, flippedBuy, flippedSell, trail: ts };
-}
+// ── Main strategy ────────────────────────────────────────────────────────────
 
 function utGptStrategy3(candles) {
-  if (!candles || candles.length < 15) {
-    return { signal: "WAIT", utbotPos: null, utbotTrail: null };
+  if (!candles || candles.length < 30) {
+    return { signal: "WAIT", reason: "Not enough data (need 30+)" };
   }
 
-  const utbot = computeUTBot(candles, 3, 10);
-  const black = computeUTBot(candles, 2, 10);
-
-  if (utbot.flippedSell) {
-    return {
-      signal: "SELL",
-      reason: "UTBOT bearish flip (K=3, ATR=10)",
-      utbotPos: utbot.pos,
-      utbotTrail: utbot.trail,
-      blackPos: black.pos,
-      blackTrail: black.trail
-    };
+  // ── Convert to Heikin-Ashi ──
+  const ha = [];
+  for (let i = 0; i < candles.length; i++) {
+    const o = Number(candles[i].open);
+    const h = Number(candles[i].high);
+    const l = Number(candles[i].low);
+    const c = Number(candles[i].close);
+    const haClose = (o + h + l + c) / 4;
+    const haOpen  = i === 0 ? (o + c) / 2 : (ha[i - 1].open + ha[i - 1].close) / 2;
+    const haHigh  = Math.max(h, haOpen, haClose);
+    const haLow   = Math.min(l, haOpen, haClose);
+    ha.push({ open: haOpen, high: haHigh, low: haLow, close: haClose });
   }
 
-  // ── REEXIT: only when main UTBOT is bullish ──
-  if (utbot.pos === 1 && black.flippedSell) {
-    return {
-      signal: "REEXIT",
-      reason: "BLACK re-exit flip bearish (K2/ATR10) while UTBOT bullish",
-      utbotPos: utbot.pos,
-      utbotTrail: utbot.trail,
-      blackPos: black.pos,
-      blackTrail: black.trail
-    };
-  }
+  const N = ha.length;
+  let lastSignal = "WAIT", lastReason = "No signal";
 
-  if (utbot.flippedBuy) {
-    return {
-      signal: "BUY",
-      reason: "UTBOT bullish flip (K=3, ATR=10)",
-      utbotPos: utbot.pos,
-      utbotTrail: utbot.trail,
-      blackPos: black.pos,
-      blackTrail: black.trail
-    };
-  }
+  // Track consecutive green/red candle streaks
+  let greenStreak = 0;
+  let greenQualifying = 0;  // count of green candles with >=3% height AND no bottom wick
+  let redStreak = 0;
+  let redHasBigCandle = false;  // at least 1 red candle with >=3% height in current streak
 
-  // ── REENTER: only when main UTBOT is bullish ──
-  if (utbot.pos === 1 && black.flippedBuy) {
-    return {
-      signal: "REENTER",
-      reason: "BLACK re-entry flip bullish (K2/ATR10) while UTBOT bullish",
-      utbotPos: utbot.pos,
-      utbotTrail: utbot.trail,
-      blackPos: black.pos,
-      blackTrail: black.trail
-    };
+  for (let i = 0; i < N; i++) {
+    const haOpen  = ha[i].open;
+    const haHigh  = ha[i].high;
+    const haLow   = ha[i].low;
+    const haClose = ha[i].close;
+
+    const isGreen = haClose > haOpen;
+    const isRed   = haClose < haOpen;
+    const height  = haHigh - haLow;
+    const threshold = haClose * 0.03;  // 3% of candle's HA close
+    const hasBottomWick = haLow < haOpen;  // green candle has bottom wick if low < open
+
+    let sig = "WAIT", reason = "No signal";
+
+    if (isGreen) {
+      redStreak = 0;
+      redHasBigCandle = false;
+      greenStreak++;
+
+      // Qualifying green candle: height >= 3% of close AND no bottom wick
+      if (height >= threshold && !hasBottomWick) {
+        greenQualifying++;
+      }
+
+      // BUY: at least 3 qualifying green candles in the current consecutive streak
+      if (greenQualifying >= 3) {
+        sig = "BUY";
+        reason = greenQualifying + " qualifying green HA candles (>=3% height, no bottom wick) in streak of " + greenStreak;
+      }
+    } else if (isRed) {
+      greenStreak = 0;
+      greenQualifying = 0;
+      redStreak++;
+
+      // Check if this red candle has height >= 3% of close
+      if (height >= threshold) {
+        redHasBigCandle = true;
+      }
+
+      // SELL: 3 consecutive red HA candles, at least 1 with >=3% height
+      if (redStreak >= 3 && redHasBigCandle) {
+        sig = "SELL";
+        reason = "3 consecutive red HA candles, at least 1 with >=3% height";
+      }
+    } else {
+      // Doji (HA open === HA close) — reset both streaks
+      greenStreak = 0;
+      greenQualifying = 0;
+      redStreak = 0;
+      redHasBigCandle = false;
+    }
+
+    lastSignal = sig;
+    lastReason = reason;
   }
 
   return {
-    signal: "WAIT",
-    utbotPos: utbot.pos,
-    utbotTrail: utbot.trail,
-    blackPos: black.pos,
-    blackTrail: black.trail
+    signal: lastSignal,
+    reason: lastReason,
+    close: ha[N - 1].close,
+    haOpen: ha[N - 1].open,
+    haHigh: ha[N - 1].high,
+    haLow: ha[N - 1].low
   };
 }
 
