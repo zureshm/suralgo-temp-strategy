@@ -1,5 +1,7 @@
 // =============================================================================
-// SumeshStrategy — UT Bot (Key=2, ATR=10) + Supertrend(10,1)
+// SumeshStrategy — UT Bot (Key=2, ATR=10) + Supertrend(10,1) (Heikin-Ashi)
+//
+// Candles are converted to Heikin-Ashi before UT Bot and Supertrend calculation.
 //
 // BUY: Both UT Bot and Supertrend are bullish.
 // SELL: UT Bot flips bearish.
@@ -87,9 +89,23 @@ function sumeshStrategy(candles) {
     return { signal: "WAIT", reason: "Not enough data (need 20+)" };
   }
 
-  const H = candles.map(c => Number(c.high));
-  const L = candles.map(c => Number(c.low));
-  const C = candles.map(c => Number(c.close));
+  // ── Convert to Heikin-Ashi ──
+  const ha = [];
+  for (let i = 0; i < candles.length; i++) {
+    const o = Number(candles[i].open);
+    const h = Number(candles[i].high);
+    const l = Number(candles[i].low);
+    const c = Number(candles[i].close);
+    const haClose = (o + h + l + c) / 4;
+    const haOpen  = i === 0 ? (o + c) / 2 : (ha[i - 1].open + ha[i - 1].close) / 2;
+    const haHigh  = Math.max(h, haOpen, haClose);
+    const haLow   = Math.min(l, haOpen, haClose);
+    ha.push({ open: haOpen, high: haHigh, low: haLow, close: haClose });
+  }
+
+  const H = ha.map(c => c.high);
+  const L = ha.map(c => c.low);
+  const C = ha.map(c => c.close);
   const N = C.length;
 
   // Precompute indicator series

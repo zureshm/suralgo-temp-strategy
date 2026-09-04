@@ -14,12 +14,12 @@
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish.
 // SELL:     CYAN or GREEN or BLUE or PURPLE flips bearish.
-// REENTER:  Both GREEN and BLUE are bullish, and PURPLE becomes bullish,
+// REENTER:  Both GREEN and BLUE and CYAN are bullish, and PURPLE becomes bullish,
 //           AND 10EMA is already above 30EMA (upward cross has occurred),
 //           AND the PURPLE flip candle's HA low is not below 30EMA
 //           (2-point tolerance: if HA low is within 2 points below 30EMA,
 //            it is still accepted; more than 2 points below → no REENTER).
-// REEXIT:   Removed (TEAL UT Bot removed).
+
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -180,12 +180,12 @@ function utGptStrategy4X(candles) {
       sig = "BUY";
       reason = "CYAN flip bullish (K1/ATR10) while BLUE & GREEN bullish";
     }
-    // ── REENTER: BLUE & GREEN bullish, PURPLE flips bullish ──
+    // ── REENTER: BLUE & GREEN & CYAN bullish, PURPLE flips bullish ──
     //           + 10EMA above 30EMA (upward cross already occurred)
     //           + PURPLE flip candle HA low not below 30EMA (2-point tolerance)
-    else if (blueBull && greenBull && purpleFlipBuy && emaCrossedUp && haLowVsEma30) {
+    else if (blueBull && greenBull && cyanBull && purpleFlipBuy && emaCrossedUp && haLowVsEma30) {
       sig = "REENTER";
-      reason = "PURPLE re-entry flip bullish (K1/ATR10) while BLUE & GREEN bullish, 10EMA>30EMA, HA low above 30EMA";
+      reason = "PURPLE re-entry flip bullish (K1/ATR10) while BLUE & GREEN & CYAN bullish, 10EMA>30EMA, HA low above 30EMA";
     }
 
     lastSignal = sig;
