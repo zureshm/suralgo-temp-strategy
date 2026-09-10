@@ -13,12 +13,18 @@
 // BUY:      BLUE flips bullish,
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish.
-// SELL:     CYAN or GREEN or BLUE or PURPLE flips bearish.
+// SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
+//           PURPLE flips bearish → conditional:
+//             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
+//             - If NOT touching 30EMA → pending PURPLE sell stored in memory.
+//               Subsequent candles are watched until any signal fires or PURPLE
+//               flips bullish:
+//               (a) candle HA low ≤ 30EMA → confirm SELL.
+//               (b) candle HA high < pending HIGH AND HA low < pending LOW
+//                   (lower high + lower low) → confirm SELL.
 // REENTER:  Both GREEN and BLUE and CYAN are bullish, and PURPLE becomes bullish,
 //           AND 10EMA is already above 30EMA (upward cross has occurred),
-//           AND the PURPLE flip candle's HA low is not below 30EMA
-//           (2-point tolerance: if HA low is within 2 points below 30EMA,
-//            it is still accepted; more than 2 points below → no REENTER).
+//           AND the PURPLE flip candle's HA low is not below 30EMA (strict).
 
 // =============================================================================
 
@@ -127,6 +133,9 @@ function utGptStrategy4X(candles) {
   let lastSignal = "WAIT", lastReason = "No signal";
   let trending = false;
 
+  // Pending PURPLE sell state
+  let pendingPurpleSell = { active: false, high: 0, low: 0 };
+
   for (let i = 1; i < N; i++) {
     const blueBull  = blue.pos[i] === 1;
     const greenBull = green.pos[i] === 1;
@@ -148,44 +157,76 @@ function utGptStrategy4X(candles) {
     const e10 = ema10[i];
     const e30 = ema30[i];
     const emaCrossedUp = e10 != null && e30 != null && e10 > e30;
-    const haLowVsEma30 = e30 != null ? L[i] >= (e30 - 2) : false; // 2-point tolerance
+    const haLowVsEma30 = e30 != null ? L[i] >= e30 : false; // strict: HA low must be at or above 30EMA
+    const touchesEma30  = e30 != null ? L[i] <= e30 : false; // candle touches or crosses below 30EMA
 
     // TRENDING: true when all 4 UT Bots are bullish on this candle
     trending = blueBull && greenBull && cyanBull && purpleBull;
 
     let sig = "WAIT", reason = "No signal";
 
-    // ── SELL: CYAN or GREEN or BLUE or PURPLE flips bearish (checked first) ──
-    if (cyanFlipSell || greenFlipSell || blueFlipSell || purpleFlipSell) {
+    // ── SELL: CYAN or GREEN or BLUE flips bearish (immediate) ──
+    if (cyanFlipSell || greenFlipSell || blueFlipSell) {
       sig = "SELL";
       const flips = [];
       if (cyanFlipSell) flips.push("CYAN");
       if (greenFlipSell) flips.push("GREEN");
       if (blueFlipSell) flips.push("BLUE");
-      if (purpleFlipSell) flips.push("PURPLE");
       reason = flips.join(" & ") + " flip bearish";
+      pendingPurpleSell = { active: false, high: 0, low: 0 }; // clear pending
     }
+    // ── SELL: PURPLE flips bearish (conditional on 30EMA) ──
+    // Note: PURPLE bullish flip cancels pending BEFORE this block (checked below)
+    else if (purpleFlipSell && !purpleFlipBuy) {
+      if (touchesEma30) {
+        sig = "SELL";
+        reason = "PURPLE flip bearish, candle touches 30EMA";
+        pendingPurpleSell = { active: false, high: 0, low: 0 };
+      } else {
+        // Not touching 30EMA → store pending, wait for confirmation
+        pendingPurpleSell = { active: true, high: H[i], low: L[i] };
+      }
+    }
+    // ── Pending PURPLE SELL confirmation ──
+    // Only checked if PURPLE did NOT flip bullish this candle
+    else if (pendingPurpleSell.active && !purpleFlipBuy) {
+      if (touchesEma30) {
+        sig = "SELL";
+        reason = "Pending PURPLE sell confirmed: candle touches 30EMA";
+        pendingPurpleSell = { active: false, high: 0, low: 0 };
+      } else if (H[i] < pendingPurpleSell.high && L[i] < pendingPurpleSell.low) {
+        sig = "SELL";
+        reason = "Pending PURPLE sell confirmed: lower high & lower low than PURPLE sell candle";
+        pendingPurpleSell = { active: false, high: 0, low: 0 };
+      }
+    }
+
     // ── BUY: BLUE flips bullish ──
-    else if (blueFlipBuy) {
+    if (sig === "WAIT" && blueFlipBuy) {
       sig = "BUY";
       reason = "BLUE flip bullish (K3/ATR10)";
     }
     // ── BUY: BLUE already bullish, GREEN flips bullish ──
-    else if (blueBull && greenFlipBuy) {
+    else if (sig === "WAIT" && blueBull && greenFlipBuy) {
       sig = "BUY";
       reason = "GREEN flip bullish (K2/ATR10) while BLUE bullish";
     }
     // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish ──
-    else if (blueBull && greenBull && cyanFlipBuy) {
+    else if (sig === "WAIT" && blueBull && greenBull && cyanFlipBuy) {
       sig = "BUY";
       reason = "CYAN flip bullish (K1/ATR10) while BLUE & GREEN bullish";
     }
     // ── REENTER: BLUE & GREEN & CYAN bullish, PURPLE flips bullish ──
     //           + 10EMA above 30EMA (upward cross already occurred)
-    //           + PURPLE flip candle HA low not below 30EMA (2-point tolerance)
-    else if (blueBull && greenBull && cyanBull && purpleFlipBuy && emaCrossedUp && haLowVsEma30) {
+    //           + PURPLE flip candle HA low not below 30EMA (strict)
+    else if (sig === "WAIT" && blueBull && greenBull && cyanBull && purpleFlipBuy && emaCrossedUp && haLowVsEma30) {
       sig = "REENTER";
       reason = "PURPLE re-entry flip bullish (K1/ATR10) while BLUE & GREEN & CYAN bullish, 10EMA>30EMA, HA low above 30EMA";
+    }
+
+    // Clear pending PURPLE sell if any BUY/REENTER signal fired, or PURPLE flipped bullish
+    if (sig === "BUY" || sig === "REENTER" || purpleFlipBuy) {
+      pendingPurpleSell = { active: false, high: 0, low: 0 };
     }
 
     lastSignal = sig;
