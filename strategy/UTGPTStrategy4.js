@@ -1,15 +1,33 @@
 // =============================================================================
-// UTGPTStrategy4 — Triple UTBOT Strategy with Re-entry / Re-exit
+// UTGPTStrategy4 — Quint UT Bot Strategy with EMA-gated Re-entry (Heikin-Ashi)
 //
 // INDICATORS & CONFIGURATION:
-//   - BLUE  (UT Bot 1): Key Value = 4, ATR Period = 10
-//   - GREEN (UT Bot 2): Key Value = 3, ATR Period = 10
-//   - BLACK (UT Bot 3): Key Value = 2, ATR Period = 10
+//   - GREEN  (UT Bot 1): Key Value = 2, ATR Period = 10
+//   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
+//   - CYAN   (UT Bot 3): Key Value = 2, ATR Period = 300
+//   - PURPLE (UT Bot 4): Key Value = 1, ATR Period = 10
+//   - TEAL   (UT Bot 5): Key Value = 4, ATR Period = 10
+//   - 10EMA and 30EMA calculated on Heikin-Ashi close.
 //
-// BUY:    Either BLUE or GREEN becomes bullish.
-// SELL:   Either BLUE or GREEN becomes bearish.
-// REENTER: Both BLUE and GREEN are bullish, and BLACK becomes bullish.
-// REXIT:  Both BLUE and GREEN are bullish, and BLACK becomes bearish.
+// Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
+//
+// BUY:      TEAL flips bullish,
+//           OR BLUE flips bullish,
+//           OR BLUE already bullish and GREEN flips bullish,
+//           OR BLUE & GREEN already bullish and CYAN flips bullish.
+// SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
+//           PURPLE flips bearish → conditional:
+//             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
+//             - If NOT touching 30EMA → pending PURPLE sell stored in memory.
+//               Subsequent candles are watched until any signal fires or PURPLE
+//               flips bullish:
+//               (a) candle HA low ≤ 30EMA → confirm SELL.
+//               (b) candle HA high < pending HIGH AND HA low < pending LOW
+//                   (lower high + lower low) → confirm SELL.
+// REENTER:  Both GREEN and BLUE and CYAN are bullish, and PURPLE becomes bullish,
+//           AND 10EMA is already above 30EMA (upward cross has occurred),
+//           AND the PURPLE flip candle's HA low is not below 30EMA (strict).
+//
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -34,6 +52,18 @@ function rmaSeries(src, period) {
 }
 
 function atrSeries(H, L, C, period) { return rmaSeries(trueRangeSeries(H, L, C), period); }
+
+// ── EMA (Exponential Moving Average) ─────────────────────────────────────────
+function emaSeries(src, period) {
+  const out = new Array(src.length).fill(null);
+  if (src.length < period) return out;
+  const k = 2 / (period + 1);
+  let s = 0;
+  for (let i = 0; i < period; i++) s += src[i];
+  out[period - 1] = s / period;
+  for (let i = period; i < src.length; i++) out[i] = src[i] * k + out[i - 1] * (1 - k);
+  return out;
+}
 
 // ── Standard UT Bot (fixed key) ─────────────────────────────────────────────
 function utBotSeries(H, L, C, keyValue, atrPeriod) {
@@ -75,54 +105,138 @@ function utGptStrategy4(candles) {
     return { signal: "WAIT", reason: "Not enough data (need 100+)" };
   }
 
-  const H = candles.map(c => Number(c.high));
-  const L = candles.map(c => Number(c.low));
-  const C = candles.map(c => Number(c.close));
+  // ── Convert to Heikin-Ashi ──
+  const ha = [];
+  for (let i = 0; i < candles.length; i++) {
+    const o = Number(candles[i].open);
+    const h = Number(candles[i].high);
+    const l = Number(candles[i].low);
+    const c = Number(candles[i].close);
+    const haClose = (o + h + l + c) / 4;
+    const haOpen  = i === 0 ? (o + c) / 2 : (ha[i - 1].open + ha[i - 1].close) / 2;
+    const haHigh  = Math.max(h, haOpen, haClose);
+    const haLow   = Math.min(l, haOpen, haClose);
+    ha.push({ open: haOpen, high: haHigh, low: haLow, close: haClose });
+  }
+
+  const H = ha.map(c => c.high);
+  const L = ha.map(c => c.low);
+  const C = ha.map(c => c.close);
   const N = C.length;
 
-  const blue  = utBotSeries(H, L, C, 4, 10); // BLUE  (Key=4, ATR=10)
-  const green = utBotSeries(H, L, C, 3, 10); // GREEN (Key=3, ATR=10)
-  const black = utBotSeries(H, L, C, 2, 10); // BLACK (Key=2, ATR=10)
+  const green  = utBotSeries(H, L, C, 2, 10); // GREEN  (Key=2, ATR=10)
+  const blue   = utBotSeries(H, L, C, 3, 10); // BLUE   (Key=3, ATR=10)
+  const cyan   = utBotSeries(H, L, C, 2, 300); // CYAN   (Key=2, ATR=300)
+  const purple = utBotSeries(H, L, C, 1, 10); // PURPLE (Key=1, ATR=10)
+  const teal   = utBotSeries(H, L, C, 4, 10); // TEAL   (Key=4, ATR=10)
+
+  const ema10 = emaSeries(C, 10); // 10EMA on Heikin-Ashi close
+  const ema30 = emaSeries(C, 30); // 30EMA on Heikin-Ashi close
 
   let lastSignal = "WAIT", lastReason = "No signal";
+  let trending = false;
+
+  // Pending PURPLE sell state
+  let pendingPurpleSell = { active: false, high: 0, low: 0 };
 
   for (let i = 1; i < N; i++) {
     const blueBull  = blue.pos[i] === 1;
     const greenBull = green.pos[i] === 1;
+    const cyanBull   = cyan.pos[i] === 1;
+    const purpleBull = purple.pos[i] === 1;
+    const tealBull   = teal.pos[i] === 1;
 
-    const blueFlipBuy  = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
-    const greenFlipBuy = green.pos[i] === 1 && green.pos[i - 1] !== 1;
+    const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
+    const greenFlipBuy  = green.pos[i] === 1 && green.pos[i - 1] !== 1;
+    const cyanFlipBuy   = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
+    const tealFlipBuy   = teal.pos[i] === 1 && teal.pos[i - 1] !== 1;
+
     const blueFlipSell  = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
     const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
+    const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
 
-    const blackFlipBuy  = black.pos[i] === 1 && black.pos[i - 1] !== 1;
-    const blackFlipSell = black.pos[i] === -1 && black.pos[i - 1] !== -1;
+    const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
+    const purpleFlipSell = purple.pos[i] === -1 && purple.pos[i - 1] !== -1;
+
+    // EMA values for this candle
+    const e10 = ema10[i];
+    const e30 = ema30[i];
+    const emaCrossedUp = e10 != null && e30 != null && e10 > e30;
+    const haLowVsEma30 = e30 != null ? L[i] >= e30 : false; // strict: HA low must be at or above 30EMA
+    const touchesEma30  = e30 != null ? L[i] <= e30 : false; // candle touches or crosses below 30EMA
+
+    // TRENDING: true when all 5 UT Bots are bullish on this candle
+    trending = blueBull && greenBull && cyanBull && purpleBull && tealBull;
 
     let sig = "WAIT", reason = "No signal";
 
-    // ── SELL: either BLUE or GREEN flips bearish ──
-    if (blueFlipSell || greenFlipSell) {
+    // ── SELL: CYAN or GREEN or BLUE flips bearish (immediate) ──
+    if (cyanFlipSell || greenFlipSell || blueFlipSell) {
       sig = "SELL";
-      if (blueFlipSell && greenFlipSell) reason = "BLUE & GREEN both flip bearish (K4/ATR10 & K3/ATR10)";
-      else if (blueFlipSell) reason = "BLUE flip bearish (K4/ATR10)";
-      else reason = "GREEN flip bearish (K3/ATR10)";
+      const flips = [];
+      if (cyanFlipSell) flips.push("CYAN");
+      if (greenFlipSell) flips.push("GREEN");
+      if (blueFlipSell) flips.push("BLUE");
+      reason = flips.join(" & ") + " flip bearish";
+      pendingPurpleSell = { active: false, high: 0, low: 0 }; // clear pending
     }
-    // ── REEXIT: both BLUE & GREEN bullish, BLACK flips bearish ──
-    else if (blueBull && greenBull && blackFlipSell) {
-      sig = "REEXIT";
-      reason = "BLACK re-exit flip bearish (K2/ATR10) while BLUE & GREEN bullish";
+    // ── SELL: PURPLE flips bearish (conditional on 30EMA) ──
+    // Note: PURPLE bullish flip cancels pending BEFORE this block (checked below)
+    else if (purpleFlipSell && !purpleFlipBuy) {
+      if (touchesEma30) {
+        sig = "SELL";
+        reason = "PURPLE flip bearish, candle touches 30EMA";
+        pendingPurpleSell = { active: false, high: 0, low: 0 };
+      } else {
+        // Not touching 30EMA → store pending, wait for confirmation
+        pendingPurpleSell = { active: true, high: H[i], low: L[i] };
+      }
     }
-    // ── BUY: either BLUE or GREEN flips bullish ──
-    else if (blueFlipBuy || greenFlipBuy) {
+    // ── Pending PURPLE SELL confirmation ──
+    // Only checked if PURPLE did NOT flip bullish this candle
+    else if (pendingPurpleSell.active && !purpleFlipBuy) {
+      if (touchesEma30) {
+        sig = "SELL";
+        reason = "Pending PURPLE sell confirmed: candle touches 30EMA";
+        pendingPurpleSell = { active: false, high: 0, low: 0 };
+      } else if (H[i] < pendingPurpleSell.high && L[i] < pendingPurpleSell.low) {
+        sig = "SELL";
+        reason = "Pending PURPLE sell confirmed: lower high & lower low than PURPLE sell candle";
+        pendingPurpleSell = { active: false, high: 0, low: 0 };
+      }
+    }
+
+    // ── BUY: TEAL flips bullish ──
+    if (sig === "WAIT" && tealFlipBuy) {
       sig = "BUY";
-      if (blueFlipBuy && greenFlipBuy) reason = "BLUE & GREEN both flip bullish (K4/ATR10 & K3/ATR10)";
-      else if (blueFlipBuy) reason = "BLUE flip bullish (K4/ATR10)";
-      else reason = "GREEN flip bullish (K3/ATR10)";
+      reason = "TEAL flip bullish (K4/ATR10)";
     }
-    // ── REENTER: both BLUE & GREEN bullish, BLACK flips bullish ──
-    else if (blueBull && greenBull && blackFlipBuy) {
+    // ── BUY: BLUE flips bullish ──
+    else if (sig === "WAIT" && blueFlipBuy) {
+      sig = "BUY";
+      reason = "BLUE flip bullish (K3/ATR10)";
+    }
+    // ── BUY: BLUE already bullish, GREEN flips bullish ──
+    else if (sig === "WAIT" && blueBull && greenFlipBuy) {
+      sig = "BUY";
+      reason = "GREEN flip bullish (K2/ATR10) while BLUE bullish";
+    }
+    // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish ──
+    else if (sig === "WAIT" && blueBull && greenBull && cyanFlipBuy) {
+      sig = "BUY";
+      reason = "CYAN flip bullish (K2/ATR300) while BLUE & GREEN bullish";
+    }
+    // ── REENTER: BLUE & GREEN & CYAN bullish, PURPLE flips bullish ──
+    //           + 10EMA above 30EMA (upward cross already occurred)
+    //           + PURPLE flip candle HA low not below 30EMA (strict)
+    else if (sig === "WAIT" && blueBull && greenBull && cyanBull && purpleFlipBuy && emaCrossedUp && haLowVsEma30) {
       sig = "REENTER";
-      reason = "BLACK re-entry flip bullish (K2/ATR10) while BLUE & GREEN bullish";
+      reason = "PURPLE re-entry flip bullish (K1/ATR10) while BLUE & GREEN & CYAN bullish, 10EMA>30EMA, HA low above 30EMA";
+    }
+
+    // Clear pending PURPLE sell if any BUY/REENTER signal fired, or PURPLE flipped bullish
+    if (sig === "BUY" || sig === "REENTER" || purpleFlipBuy) {
+      pendingPurpleSell = { active: false, high: 0, low: 0 };
     }
 
     lastSignal = sig;
@@ -132,12 +246,19 @@ function utGptStrategy4(candles) {
   return {
     signal: lastSignal,
     reason: lastReason,
-    bluePos: blue.pos[N - 1],
-    blueTrail: blue.trail[N - 1],
+    trending,
     greenPos: green.pos[N - 1],
+    bluePos: blue.pos[N - 1],
+    cyanPos: cyan.pos[N - 1],
+    purplePos: purple.pos[N - 1],
+    tealPos: teal.pos[N - 1],
     greenTrail: green.trail[N - 1],
-    blackPos: black.pos[N - 1],
-    blackTrail: black.trail[N - 1],
+    blueTrail: blue.trail[N - 1],
+    cyanTrail: cyan.trail[N - 1],
+    purpleTrail: purple.trail[N - 1],
+    tealTrail: teal.trail[N - 1],
+    ema10: ema10[N - 1],
+    ema30: ema30[N - 1],
     close: C[N - 1]
   };
 }

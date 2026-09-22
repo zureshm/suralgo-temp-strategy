@@ -11,11 +11,11 @@ const { superUTBotStrategy } = require("./strategy/superUTBotStrategy");
 const { superDoubleUT } = require("./strategy/superDoubleUT");
 const { utGptStrategy : HEIKIN_SUMESH_RE } = require("./strategy/UTGPTStrategy");
 const { utGptStrategy1 : HEIKIN_FREEFALL_RE} = require("./strategy/UTGPTStrategy1");
-const { utGptStrategy2 : HEIKIN_RE } = require("./strategy/UTGPTStrategy2");
+const { utGptStrategy2 : HEIKIN_OLD_RE } = require("./strategy/UTGPTStrategy2");
 const { utGptStrategy3 : HEIKIN_SUMESH_GRRR } = require("./strategy/UTGPTStrategy3");
-const { VWAPUTBotStrategy: Shakunam_DY} = require("./strategy/VWAPUTBotStrategy");
+const { VWAPUTBotStrategy: HEIKIN_CHATGPT} = require("./strategy/VWAPUTBotStrategy");
 const { sumeshStrategy } = require("./strategy/SumeshStrategy");
-const { utGptStrategy4: utBotStrategy4_RE } = require("./strategy/UTGPTStrategy4");
+const { utGptStrategy4: HEIKIN_DINKAN_RE } = require("./strategy/UTGPTStrategy4");
 const { utGptStrategy4X :HEIKIN_CAREFUL_RE } = require("./strategy/UTGPTStrategy4X");
 
 const app = express();
@@ -83,16 +83,16 @@ const strategies = {
   superDoubleUT,
   HEIKIN_SUMESH_RE,
   HEIKIN_FREEFALL_RE,
-  HEIKIN_RE,
+  HEIKIN_OLD_RE,
   HEIKIN_SUMESH_GRRR,
-  Shakunam_DY,
+  HEIKIN_CHATGPT,
   sumeshStrategy,
-  utBotStrategy4_RE,
+  HEIKIN_DINKAN_RE,
   HEIKIN_CAREFUL_RE
 };
 
 // Active strategy (default)
-let activeStrategy = "HEIKIN_CAREFUL_RE";
+let activeStrategy = "HEIKIN_DINKAN_RE";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};

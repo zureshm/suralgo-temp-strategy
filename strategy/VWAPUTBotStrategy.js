@@ -1,26 +1,21 @@
 // =============================================================================
-// VWAPUTBotStrategy — Quad UTBOT Confluence Strategy
+// VWAPUTBotStrategy — EMA Crossover + MACD + ATR Sideways Filter (Heikin-Ashi)
+//
+// Based on chatGptStrategy logic, adapted to use Heikin-Ashi candles.
 //
 // INDICATORS & CONFIGURATION:
-//   - GREEN  (UT Bot 1): Key Value = 4, ATR Period = 10
-//   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
-//   - PURPLE (UT Bot 3): Key Value = 5, ATR Period = 20
-//   - CYAN   (UT Bot 4): Dynamic Key (5-15 based on premium), ATR Period = 1000
-//     Key tiers: <100→5, 100-120→6, 120-150→7, 150-200→8, then +1 per 50 up to 500+→15
-//   - DARKGREEN (UT Bot 5): Key Value = 6, ATR Period = 60
+//   - EMA 10 and EMA 20 on Heikin-Ashi close (crossover detection)
+//   - MACD (fast=6, slow=26, signal=9) on Heikin-Ashi close
+//   - ATR(14) on Heikin-Ashi candles for sideways filter
 //
-// BUY CONDITIONS (any one fires BUY):
-//   1) CYAN flips bullish + GREEN bullish + PURPLE bearish right now.
-//   1b) CYAN flips bullish + GREEN bullish + DARKGREEN already bullish
-//       (overrides PURPLE-bearish requirement of rule 1).
-//   2) PURPLE & CYAN both flip bullish same candle + GREEN bullish
-//      (overrides PURPLE-bearish requirement of rule 1).
-//   3) BLUE flips bullish + GREEN & PURPLE & CYAN bullish on that candle.
-//   4) PURPLE flips bullish + GREEN & BLUE & CYAN bullish on that candle.
-//   5) GREEN flips bullish + CYAN & BLUE & PURPLE bullish on that candle.
+// Candles are converted to Heikin-Ashi before all calculations.
 //
-// SELL CONDITIONS:
-//   BLUE OR CYAN OR GREEN OR PURPLE flips bearish → SELL.
+// BUY:  EMA10 crosses above EMA20 AND MACD line > signal line
+//       AND not sideways (14-candle range >= ATR*2)
+//       AND current HA candle is green (close > open).
+// SELL: EMA10 crosses below EMA20 AND MACD line < signal line
+//       AND not sideways
+//       AND current HA candle is red (close < open).
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -34,8 +29,6 @@ function trueRangeSeries(H, L, C) {
   return tr;
 }
 
-// Wilder RMA (TradingView `ta.rma`): SMA-seeded over the first `period` samples,
-// then Wilder smoothing. Returns null until `period` samples exist.
 function rmaSeries(src, period) {
   const out = new Array(src.length).fill(null);
   if (src.length < period) return out;
@@ -48,166 +41,111 @@ function rmaSeries(src, period) {
 
 function atrSeries(H, L, C, period) { return rmaSeries(trueRangeSeries(H, L, C), period); }
 
-// ── Dynamic Key for CYAN based on premium (close price) ─────────────────────
-function getDynamicCyanKey(close) {
-  if (close < 100) return 6;
-  if (close < 140) return 7;
-  if (close < 170) return 8;
-  if (close < 200) return 9;
-  if (close < 220) return 10;
-  if (close < 250) return 11;
-  if (close < 300) return 12;
-  if (close < 320) return 13;
-  if (close < 350) return 14;
-  if (close < 400) return 15;
-  return 16;
+// ── EMA series ───────────────────────────────────────────────────────────────
+function emaSeries(src, period) {
+  const out = new Array(src.length).fill(null);
+  if (src.length < period) return out;
+  const k = 2 / (period + 1);
+  let s = 0;
+  for (let i = 0; i < period; i++) s += src[i];
+  out[period - 1] = s / period;
+  for (let i = period; i < src.length; i++) out[i] = src[i] * k + out[i - 1] * (1 - k);
+  return out;
 }
 
-// ── UT Bot with dynamic key value (key changes per candle based on close) ────
-function utBotSeriesDynamicKey(H, L, C, atrPeriod) {
-  const N = C.length;
-  const atr = atrSeries(H, L, C, atrPeriod);
-  const posArr = new Array(N).fill(0);
-  const tsArr = new Array(N).fill(null);
-
-  let ts = 0, pos = 0;
-  for (let i = 1; i < N; i++) {
-    if (atr[i] == null) { posArr[i] = pos; tsArr[i] = ts; continue; }
-    const keyValue = getDynamicCyanKey(C[i]);
-    const nLoss = keyValue * atr[i];
-    const prevTS = ts;
-
-    if (C[i] > prevTS && C[i - 1] > prevTS) {
-      ts = Math.max(prevTS, C[i] - nLoss);
-    } else if (C[i] < prevTS && C[i - 1] < prevTS) {
-      ts = Math.min(prevTS, C[i] + nLoss);
-    } else if (C[i] > prevTS) {
-      ts = C[i] - nLoss;
-    } else {
-      ts = C[i] + nLoss;
-    }
-
-    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
-    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
-
-    posArr[i] = pos;
-    tsArr[i] = ts;
+// ── MACD series (returns macdLine and signalLine arrays) ─────────────────────
+function macdSeries(src, fastPeriod, slowPeriod, signalPeriod) {
+  const emaFast = emaSeries(src, fastPeriod);
+  const emaSlow = emaSeries(src, slowPeriod);
+  const N = src.length;
+  const macdLine = new Array(N).fill(null);
+  for (let i = 0; i < N; i++) {
+    if (emaFast[i] != null && emaSlow[i] != null) macdLine[i] = emaFast[i] - emaSlow[i];
   }
-
-  return { pos: posArr, trail: tsArr };
-}
-
-// ── Standard UT Bot (ATR trailing stop) ──────────────────────────────────────
-// Returns per-candle position series (1 = bullish, -1 = bearish) and the
-// trailing stop series. Identical logic to the UT Bot used in our other scripts.
-
-function utBotSeries(H, L, C, keyValue, atrPeriod) {
-  const N = C.length;
-  const atr = atrSeries(H, L, C, atrPeriod);
-  const posArr = new Array(N).fill(0);
-  const tsArr = new Array(N).fill(null);
-
-  let ts = 0, pos = 0;
-  for (let i = 1; i < N; i++) {
-    if (atr[i] == null) { posArr[i] = pos; tsArr[i] = ts; continue; }
-    const nLoss = keyValue * atr[i];
-    const prevTS = ts;
-
-    if (C[i] > prevTS && C[i - 1] > prevTS) {
-      ts = Math.max(prevTS, C[i] - nLoss);
-    } else if (C[i] < prevTS && C[i - 1] < prevTS) {
-      ts = Math.min(prevTS, C[i] + nLoss);
-    } else if (C[i] > prevTS) {
-      ts = C[i] - nLoss;
-    } else {
-      ts = C[i] + nLoss;
-    }
-
-    // Canonical UT Bot crossover (uses the PREVIOUS trailing stop on both sides)
-    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
-    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
-
-    posArr[i] = pos;
-    tsArr[i] = ts;
+  // Signal line = EMA of MACD line (only non-null values)
+  const macdValid = macdLine.filter(v => v != null);
+  const signalRaw = emaSeries(macdValid, signalPeriod);
+  const signalLine = new Array(N).fill(null);
+  const offset = N - macdValid.length;
+  for (let i = 0; i < macdValid.length; i++) {
+    signalLine[offset + i] = signalRaw[i];
   }
-
-  return { pos: posArr, trail: tsArr };
+  return { macdLine, signalLine };
 }
 
 // ── Main strategy ─────────────────────────────────────────────────────────────
 
 function VWAPUTBotStrategy(candles) {
-  // Require only ~100 real candles.
-  if (!candles || candles.length < 100) {
-    return { signal: "WAIT", reason: "Not enough data (need 100+)" };
+  if (!candles || candles.length < 50) {
+    return { signal: "WAIT", reason: "Not enough data (need 50+)" };
   }
 
-  const H = candles.map(c => Number(c.high));
-  const L = candles.map(c => Number(c.low));
-  const C = candles.map(c => Number(c.close));
+  // ── Convert to Heikin-Ashi ──
+  const ha = [];
+  for (let i = 0; i < candles.length; i++) {
+    const o = Number(candles[i].open);
+    const h = Number(candles[i].high);
+    const l = Number(candles[i].low);
+    const c = Number(candles[i].close);
+    const haClose = (o + h + l + c) / 4;
+    const haOpen  = i === 0 ? (o + c) / 2 : (ha[i - 1].open + ha[i - 1].close) / 2;
+    const haHigh  = Math.max(h, haOpen, haClose);
+    const haLow   = Math.min(l, haOpen, haClose);
+    ha.push({ open: haOpen, high: haHigh, low: haLow, close: haClose });
+  }
+
+  const H = ha.map(c => c.high);
+  const L = ha.map(c => c.low);
+  const C = ha.map(c => c.close);
+  const O = ha.map(c => c.open);
   const N = C.length;
 
-  // Five UT Bots
-  const green     = utBotSeries(H, L, C, 4, 10);   // GREEN     (Key=4, ATR=10)
-  const blue      = utBotSeries(H, L, C, 3, 10);   // BLUE      (Key=3, ATR=10)
-  const purple    = utBotSeries(H, L, C, 5, 20);   // PURPLE    (Key=5, ATR=20)
-  const cyan      = utBotSeriesDynamicKey(H, L, C, 1000); // CYAN (Dynamic Key, ATR=1000)
-  const darkgreen = utBotSeries(H, L, C, 6, 60);   // DARKGREEN (Key=6, ATR=60)
+  // Indicators
+  const ema10 = emaSeries(C, 10);
+  const ema20 = emaSeries(C, 20);
+  const { macdLine, signalLine } = macdSeries(C, 6, 26, 9);
+  const atr14 = atrSeries(H, L, C, 14);
 
-  let inPosition = false;
   let lastSignal = "WAIT", lastReason = "No signal";
 
   for (let i = 1; i < N; i++) {
-    const greenBull     = green.pos[i] === 1;
-    const blueBull      = blue.pos[i] === 1;
-    const purpleBull    = purple.pos[i] === 1;
-    const cyanBull      = cyan.pos[i] === 1;
-    const darkgreenBull = darkgreen.pos[i] === 1;
+    const e10_prev = ema10[i - 1];
+    const e10_now  = ema10[i];
+    const e20_prev = ema20[i - 1];
+    const e20_now  = ema20[i];
+    const macd_now = macdLine[i];
+    const signal_now = signalLine[i];
+    const atr_now = atr14[i];
 
-    const greenFlipBuy  = green.pos[i] === 1 && green.pos[i - 1] !== 1;
-    const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
-    const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
-    const cyanFlipBuy   = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
+    if (e10_prev == null || e10_now == null || e20_prev == null || e20_now == null) continue;
+    if (macd_now == null || signal_now == null) continue;
 
-    const greenFlipSell  = green.pos[i] === -1 && green.pos[i - 1] !== -1;
-    const blueFlipSell   = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
-    const purpleFlipSell = purple.pos[i] === -1 && purple.pos[i - 1] !== -1;
-    const cyanFlipSell   = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
+    // Sideways filter: 14-candle range vs ATR*2
+    let sideways = false;
+    if (atr_now != null && i >= 13) {
+      let recentHigh = -Infinity, recentLow = Infinity;
+      for (let j = i - 13; j <= i; j++) {
+        if (H[j] > recentHigh) recentHigh = H[j];
+        if (L[j] < recentLow) recentLow = L[j];
+      }
+      const range = recentHigh - recentLow;
+      sideways = range < atr_now * 2;
+    }
+
+    const isGreen = C[i] > O[i];
+    const isRed   = C[i] < O[i];
 
     let sig = "WAIT", reason = "No signal";
 
-    // ── BUY CONDITIONS ──
-    // 1) CYAN flips + GREEN bullish + PURPLE bearish right now
-    const buy1 = cyanFlipBuy && greenBull && !purpleBull && !darkgreenBull;
-    // 1b) CYAN flips + GREEN bullish + DARKGREEN already bullish (overrides PURPLE ban)
-    const buy1b = cyanFlipBuy && greenBull && darkgreenBull;
-    // 2) PURPLE & CYAN both flip same candle + GREEN bullish
-    const buy2 = purpleFlipBuy && cyanFlipBuy && greenBull;
-    // 3) BLUE flips + GREEN & PURPLE & CYAN bullish
-    const buy3 = blueFlipBuy && greenBull && purpleBull && cyanBull;
-    // 4) PURPLE flips + GREEN & BLUE & CYAN bullish
-    const buy4 = purpleFlipBuy && greenBull && blueBull && cyanBull;
-    // 5) GREEN flips + CYAN & BLUE & PURPLE bullish
-    const buy5 = greenFlipBuy && cyanBull && blueBull && purpleBull;
-
-    if (!inPosition && (buy1 || buy1b || buy2 || buy3 || buy4 || buy5)) {
-      inPosition = true;
+    // ── BUY: EMA10 crosses above EMA20 + MACD bullish + not sideways + green HA candle ──
+    if (e10_prev <= e20_prev && e10_now > e20_now && macd_now > signal_now && !sideways && isGreen) {
       sig = "BUY";
-      if (buy1) reason = "CYAN flip (K6/ATR1000) + GREEN bullish + PURPLE bearish";
-      else if (buy1b) reason = "CYAN flip (K6/ATR1000) + GREEN bullish + DARKGREEN override";
-      else if (buy2) reason = "PURPLE & CYAN flip same candle + GREEN bullish";
-      else if (buy3) reason = "BLUE flip (K3/ATR10) + GREEN & PURPLE & CYAN bullish";
-      else if (buy4) reason = "PURPLE flip (K5/ATR20) + GREEN & BLUE & CYAN bullish";
-      else reason = "GREEN flip (K4/ATR10) + CYAN & BLUE & PURPLE bullish";
+      reason = "EMA10 crossed above EMA20 + MACD bullish + not sideways + green HA candle";
     }
-    // ── SELL: any of the 4 bots flips bearish ──
-    else if (inPosition && (greenFlipSell || blueFlipSell || purpleFlipSell || cyanFlipSell)) {
-      inPosition = false;
+    // ── SELL: EMA10 crosses below EMA20 + MACD bearish + not sideways + red HA candle ──
+    else if (e10_prev >= e20_prev && e10_now < e20_now && macd_now < signal_now && !sideways && isRed) {
       sig = "SELL";
-      if (cyanFlipSell) reason = "CYAN sell flip (K6/ATR1000)";
-      else if (greenFlipSell) reason = "GREEN sell flip (K4/ATR10)";
-      else if (blueFlipSell) reason = "BLUE sell flip (K3/ATR10)";
-      else reason = "PURPLE sell flip (K5/ATR20)";
+      reason = "EMA10 crossed below EMA20 + MACD bearish + not sideways + red HA candle";
     }
 
     lastSignal = sig;
@@ -217,16 +155,11 @@ function VWAPUTBotStrategy(candles) {
   return {
     signal: lastSignal,
     reason: lastReason,
-    greenPos: green.pos[N - 1],
-    greenTrail: green.trail[N - 1],
-    bluePos: blue.pos[N - 1],
-    blueTrail: blue.trail[N - 1],
-    purplePos: purple.pos[N - 1],
-    purpleTrail: purple.trail[N - 1],
-    cyanPos: cyan.pos[N - 1],
-    cyanTrail: cyan.trail[N - 1],
-    darkgreenPos: darkgreen.pos[N - 1],
-    darkgreenTrail: darkgreen.trail[N - 1],
+    ema10: ema10[N - 1],
+    ema20: ema20[N - 1],
+    macd: macdLine[N - 1],
+    macdSignal: signalLine[N - 1],
+    atr: atr14[N - 1],
     close: C[N - 1]
   };
 }
