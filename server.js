@@ -14,7 +14,7 @@ const { utGptStrategy1 : HEIKIN_FREEFALL_RE} = require("./strategy/UTGPTStrategy
 const { utGptStrategy2 : HEIKIN_OLD_RE } = require("./strategy/UTGPTStrategy2");
 const { utGptStrategy3 : HEIKIN_SUMESH_GRRR } = require("./strategy/UTGPTStrategy3");
 const { VWAPUTBotStrategy: HEIKIN_CHATGPT} = require("./strategy/VWAPUTBotStrategy");
-const { sumeshStrategy } = require("./strategy/SumeshStrategy");
+const { sumeshStrategy :HEIKIN_BOOMBUY_RE } = require("./strategy/SumeshStrategy");
 const { utGptStrategy4: HEIKIN_DINKAN_RE } = require("./strategy/UTGPTStrategy4");
 const { utGptStrategy4X :HEIKIN_CAREFUL_RE } = require("./strategy/UTGPTStrategy4X");
 
@@ -86,13 +86,13 @@ const strategies = {
   HEIKIN_OLD_RE,
   HEIKIN_SUMESH_GRRR,
   HEIKIN_CHATGPT,
-  sumeshStrategy,
+  HEIKIN_BOOMBUY_RE,
   HEIKIN_DINKAN_RE,
   HEIKIN_CAREFUL_RE
 };
 
 // Active strategy (default)
-let activeStrategy = "HEIKIN_SUMESH_RE";
+let activeStrategy = "HEIKIN_BOOMBUY_RE";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};

@@ -1,23 +1,45 @@
 // =============================================================================
-// SumeshStrategy — UT Bot (Key=2, ATR=10) + Supertrend(10,1) (Heikin-Ashi)
+// SumeshStrategy — Quint UT Bot Strategy with EMA-gated Re-entry (Heikin-Ashi)
+// (Replica of UTGPTStrategy4)
 //
-// Candles are converted to Heikin-Ashi before UT Bot and Supertrend calculation.
+// INDICATORS & CONFIGURATION:
+//   - GREEN  (UT Bot 1): Key Value = 2, ATR Period = 10
+//   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
+//   - CYAN   (UT Bot 3): Key Value = 2, ATR Period = 300
+//   - PURPLE (UT Bot 4): Key Value = 1, ATR Period = 10
+//   - TEAL   (UT Bot 5): Key Value = 4, ATR Period = 10
+//   - GOLD   (UT Bot 6): Key Value = 3, ATR Period = 300
+//   - 10EMA and 30EMA calculated on Heikin-Ashi close.
 //
-// BUY: Both UT Bot and Supertrend are bullish.
-// SELL: UT Bot flips bearish.
+// Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
+//
+// BUY:      TEAL flips bullish,
+//           OR BLUE flips bullish,
+//           OR BLUE already bullish and GREEN flips bullish,
+//           OR BLUE & GREEN already bullish and CYAN flips bullish.
+// BOOMBUY:  BLUE and TEAL already bullish, and GOLD flips bullish.
+// SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
+//           PURPLE flips bearish → conditional:
+//             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
+//             - If NOT touching 30EMA → pending PURPLE sell stored in memory.
+//               Subsequent candles are watched until any signal fires or PURPLE
+//               flips bullish:
+//               (a) candle HA low ≤ 30EMA → confirm SELL.
+//               (b) candle HA high < pending HIGH AND HA low < pending LOW
+//                   (lower high + lower low) → confirm SELL.
+// REENTER:  Both GREEN and BLUE and CYAN are bullish, and PURPLE becomes bullish,
+//           AND 10EMA is already above 30EMA (upward cross has occurred),
+//           AND the PURPLE flip candle's HA low is not below 30EMA (strict).
+//
 // =============================================================================
 
-// ── Helper functions ─────────────────────────────────────────────────────────
+// ── Indicator helpers ────────────────────────────────────────────────────────
 
 function trueRangeSeries(H, L, C) {
   const tr = [];
   for (let i = 0; i < C.length; i++) {
     if (i === 0) { tr.push(H[i] - L[i]); continue; }
-    tr.push(Math.max(
-      H[i] - L[i],
-      Math.abs(H[i] - C[i - 1]),
-      Math.abs(L[i] - C[i - 1])
-    ));
+    tr.push(Math.max(H[i] - L[i], Math.abs(H[i] - C[i - 1]), Math.abs(L[i] - C[i - 1])));
   }
   return tr;
 }
@@ -28,65 +50,62 @@ function rmaSeries(src, period) {
   let s = 0;
   for (let i = 0; i < period; i++) s += src[i];
   out[period - 1] = s / period;
-  for (let i = period; i < src.length; i++) {
-    out[i] = (out[i - 1] * (period - 1) + src[i]) / period;
-  }
+  for (let i = period; i < src.length; i++) out[i] = (out[i - 1] * (period - 1) + src[i]) / period;
   return out;
 }
 
-function atrSeries(H, L, C, period) {
-  return rmaSeries(trueRangeSeries(H, L, C), period);
+function atrSeries(H, L, C, period) { return rmaSeries(trueRangeSeries(H, L, C), period); }
+
+// ── EMA (Exponential Moving Average) ─────────────────────────────────────────
+function emaSeries(src, period) {
+  const out = new Array(src.length).fill(null);
+  if (src.length < period) return out;
+  const k = 2 / (period + 1);
+  let s = 0;
+  for (let i = 0; i < period; i++) s += src[i];
+  out[period - 1] = s / period;
+  for (let i = period; i < src.length; i++) out[i] = src[i] * k + out[i - 1] * (1 - k);
+  return out;
 }
 
-// ── Supertrend (ATR=10, Factor=1) ────────────────────────────────────────────
+// ── Standard UT Bot (fixed key) ─────────────────────────────────────────────
+function utBotSeries(H, L, C, keyValue, atrPeriod) {
+  const N = C.length;
+  const atr = atrSeries(H, L, C, atrPeriod);
+  const posArr = new Array(N).fill(0);
+  const tsArr = new Array(N).fill(null);
 
-function supertrendSeries(H, L, C, period, multiplier) {
-  const atr = atrSeries(H, L, C, period);
-  const len = C.length;
-  const st = new Array(len).fill(null);
-  const dir = new Array(len).fill(0);
-  const up = new Array(len).fill(null);
-  const dn = new Array(len).fill(null);
+  let ts = 0, pos = 0;
+  for (let i = 1; i < N; i++) {
+    if (atr[i] == null) { posArr[i] = pos; tsArr[i] = ts; continue; }
+    const nLoss = keyValue * atr[i];
+    const prevTS = ts;
 
-  for (let i = 0; i < len; i++) {
-    if (atr[i] == null) continue;
-    const hl2 = (H[i] + L[i]) / 2;
-    const rawUp = hl2 - multiplier * atr[i];
-    const rawDn = hl2 + multiplier * atr[i];
-
-    if (i > 0 && up[i - 1] != null && C[i - 1] > up[i - 1]) {
-      up[i] = Math.max(rawUp, up[i - 1]);
+    if (C[i] > prevTS && C[i - 1] > prevTS) {
+      ts = Math.max(prevTS, C[i] - nLoss);
+    } else if (C[i] < prevTS && C[i - 1] < prevTS) {
+      ts = Math.min(prevTS, C[i] + nLoss);
+    } else if (C[i] > prevTS) {
+      ts = C[i] - nLoss;
     } else {
-      up[i] = rawUp;
+      ts = C[i] + nLoss;
     }
 
-    if (i > 0 && dn[i - 1] != null && C[i - 1] < dn[i - 1]) {
-      dn[i] = Math.min(rawDn, dn[i - 1]);
-    } else {
-      dn[i] = rawDn;
-    }
+    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
+    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
 
-    if (i === 0 || dir[i - 1] === 0) {
-      dir[i] = C[i] > dn[i] ? 1 : -1;
-    } else if (dir[i - 1] === -1 && C[i] > dn[i - 1]) {
-      dir[i] = 1;
-    } else if (dir[i - 1] === 1 && C[i] < up[i - 1]) {
-      dir[i] = -1;
-    } else {
-      dir[i] = dir[i - 1];
-    }
-
-    st[i] = dir[i] === 1 ? up[i] : dn[i];
+    posArr[i] = pos;
+    tsArr[i] = ts;
   }
 
-  return { supertrend: st, direction: dir };
+  return { pos: posArr, trail: tsArr };
 }
 
 // ── Main strategy ────────────────────────────────────────────────────────────
 
 function sumeshStrategy(candles) {
-  if (!candles || candles.length < 20) {
-    return { signal: "WAIT", reason: "Not enough data (need 20+)" };
+  if (!candles || candles.length < 100) {
+    return { signal: "WAIT", reason: "Not enough data (need 100+)" };
   }
 
   // ── Convert to Heikin-Ashi ──
@@ -108,59 +127,127 @@ function sumeshStrategy(candles) {
   const C = ha.map(c => c.close);
   const N = C.length;
 
-  // Precompute indicator series
-  const atr10 = atrSeries(H, L, C, 10);
-  const { supertrend: stLine, direction: stDir } = supertrendSeries(H, L, C, 10, 1);
+  const green  = utBotSeries(H, L, C, 2, 10); // GREEN  (Key=2, ATR=10)
+  const blue   = utBotSeries(H, L, C, 3, 10); // BLUE   (Key=3, ATR=10)
+  const cyan   = utBotSeries(H, L, C, 2, 300); // CYAN   (Key=2, ATR=300)
+  const purple = utBotSeries(H, L, C, 1, 10); // PURPLE (Key=1, ATR=10)
+  const teal   = utBotSeries(H, L, C, 4, 10); // TEAL   (Key=4, ATR=10)
+  const gold   = utBotSeries(H, L, C, 3, 300); // GOLD   (Key=3, ATR=300)
 
-  // UT Bot state (Key=2, ATR=10)
-  let ts = 0, pos = 0;
-  let inPosition = false;
+  const ema10 = emaSeries(C, 10); // 10EMA on Heikin-Ashi close
+  const ema30 = emaSeries(C, 30); // 30EMA on Heikin-Ashi close
+
   let lastSignal = "WAIT", lastReason = "No signal";
+  let trending = false;
+
+  // Pending PURPLE sell state
+  let pendingPurpleSell = { active: false, high: 0, low: 0 };
 
   for (let i = 1; i < N; i++) {
-    const stBullish = stDir[i] === 1;
+    const blueBull  = blue.pos[i] === 1;
+    const greenBull = green.pos[i] === 1;
+    const cyanBull   = cyan.pos[i] === 1;
+    const purpleBull = purple.pos[i] === 1;
+    const tealBull   = teal.pos[i] === 1;
+    const goldBull   = gold.pos[i] === 1;
 
-    // UT Bot (Key=2, ATR=10)
-    let utFlippedBuy = false, utFlippedSell = false;
-    if (atr10[i] != null) {
-      const nLoss = 2 * atr10[i];
-      const prevTS = ts;
+    const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
+    const greenFlipBuy  = green.pos[i] === 1 && green.pos[i - 1] !== 1;
+    const cyanFlipBuy   = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
+    const tealFlipBuy   = teal.pos[i] === 1 && teal.pos[i - 1] !== 1;
+    const goldFlipBuy   = gold.pos[i] === 1 && gold.pos[i - 1] !== 1;
 
-      if (C[i] > prevTS && C[i - 1] > prevTS) {
-        ts = Math.max(prevTS, C[i] - nLoss);
-      } else if (C[i] < prevTS && C[i - 1] < prevTS) {
-        ts = Math.min(prevTS, C[i] + nLoss);
-      } else if (C[i] > prevTS) {
-        ts = C[i] - nLoss;
-      } else {
-        ts = C[i] + nLoss;
-      }
+    const blueFlipSell  = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
+    const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
+    const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
 
-      const prevPos = pos;
-      if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
-      else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
+    const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
+    const purpleFlipSell = purple.pos[i] === -1 && purple.pos[i - 1] !== -1;
 
-      utFlippedBuy = pos === 1 && prevPos !== 1;
-      utFlippedSell = pos === -1 && prevPos !== -1;
-    }
+    // EMA values for this candle
+    const e10 = ema10[i];
+    const e30 = ema30[i];
+    const emaCrossedUp = e10 != null && e30 != null && e10 > e30;
+    const haLowVsEma30 = e30 != null ? L[i] >= e30 : false; // strict: HA low must be at or above 30EMA
+    const touchesEma30  = e30 != null ? L[i] <= e30 : false; // candle touches or crosses below 30EMA
 
-    const utBullish = pos === 1;
+    // TRENDING: true when all 6 UT Bots are bullish on this candle
+    trending = blueBull && greenBull && cyanBull && purpleBull && tealBull && goldBull;
+
     let sig = "WAIT", reason = "No signal";
 
-    // ── BUY: Both UT Bot and Supertrend are bullish ──
-    if (!inPosition && utBullish && stBullish) {
-      inPosition = true;
-      sig = "BUY";
-      reason = utFlippedBuy
-        ? "UT Bot flip bullish (K2/ATR10) + ST(10,1) bullish"
-        : "UT Bot bullish (K2/ATR10) + ST(10,1) bullish";
+    // ── SELL: CYAN or GREEN or BLUE flips bearish (immediate) ──
+    if (cyanFlipSell || greenFlipSell || blueFlipSell) {
+      sig = "SELL";
+      const flips = [];
+      if (cyanFlipSell) flips.push("CYAN");
+      if (greenFlipSell) flips.push("GREEN");
+      if (blueFlipSell) flips.push("BLUE");
+      reason = flips.join(" & ") + " flip bearish";
+      pendingPurpleSell = { active: false, high: 0, low: 0 }; // clear pending
+    }
+    // ── SELL: PURPLE flips bearish (conditional on 30EMA) ──
+    // Note: PURPLE bullish flip cancels pending BEFORE this block (checked below)
+    else if (purpleFlipSell && !purpleFlipBuy) {
+      if (touchesEma30) {
+        sig = "SELL";
+        reason = "PURPLE flip bearish, candle touches 30EMA";
+        pendingPurpleSell = { active: false, high: 0, low: 0 };
+      } else {
+        // Not touching 30EMA → store pending, wait for confirmation
+        pendingPurpleSell = { active: true, high: H[i], low: L[i] };
+      }
+    }
+    // ── Pending PURPLE SELL confirmation ──
+    // Only checked if PURPLE did NOT flip bullish this candle
+    else if (pendingPurpleSell.active && !purpleFlipBuy) {
+      if (touchesEma30) {
+        sig = "SELL";
+        reason = "Pending PURPLE sell confirmed: candle touches 30EMA";
+        pendingPurpleSell = { active: false, high: 0, low: 0 };
+      } else if (H[i] < pendingPurpleSell.high && L[i] < pendingPurpleSell.low) {
+        sig = "SELL";
+        reason = "Pending PURPLE sell confirmed: lower high & lower low than PURPLE sell candle";
+        pendingPurpleSell = { active: false, high: 0, low: 0 };
+      }
     }
 
-    // ── SELL: UT Bot flips bearish ──
-    else if (inPosition && utFlippedSell) {
-      inPosition = false;
-      sig = "SELL";
-      reason = "UT Bot sell flip (K2/ATR10)";
+    // ── BOOMBUY: BLUE & TEAL already bullish, GOLD flips bullish ──
+    if (sig === "WAIT" && blueBull && tealBull && goldFlipBuy) {
+      sig = "BOOMBUY";
+      reason = "GOLD flip bullish (K3/ATR300) while BLUE & TEAL bullish";
+    }
+    // ── BUY: TEAL flips bullish ──
+    else if (sig === "WAIT" && tealFlipBuy) {
+      sig = "BUY";
+      reason = "TEAL flip bullish (K4/ATR10)";
+    }
+    // ── BUY: BLUE flips bullish ──
+    else if (sig === "WAIT" && blueFlipBuy) {
+      sig = "BUY";
+      reason = "BLUE flip bullish (K3/ATR10)";
+    }
+    // ── BUY: BLUE already bullish, GREEN flips bullish ──
+    else if (sig === "WAIT" && blueBull && greenFlipBuy) {
+      sig = "BUY";
+      reason = "GREEN flip bullish (K2/ATR10) while BLUE bullish";
+    }
+    // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish ──
+    else if (sig === "WAIT" && blueBull && greenBull && cyanFlipBuy) {
+      sig = "BUY";
+      reason = "CYAN flip bullish (K2/ATR300) while BLUE & GREEN bullish";
+    }
+    // ── REENTER: BLUE & GREEN & CYAN bullish, PURPLE flips bullish ──
+    //           + 10EMA above 30EMA (upward cross already occurred)
+    //           + PURPLE flip candle HA low not below 30EMA (strict)
+    else if (sig === "WAIT" && blueBull && greenBull && cyanBull && purpleFlipBuy && emaCrossedUp && haLowVsEma30) {
+      sig = "REENTER";
+      reason = "PURPLE re-entry flip bullish (K1/ATR10) while BLUE & GREEN & CYAN bullish, 10EMA>30EMA, HA low above 30EMA";
+    }
+
+    // Clear pending PURPLE sell if any BUY/BOOMBUY/REENTER signal fired, or PURPLE flipped bullish
+    if (sig === "BUY" || sig === "BOOMBUY" || sig === "REENTER" || purpleFlipBuy) {
+      pendingPurpleSell = { active: false, high: 0, low: 0 };
     }
 
     lastSignal = sig;
@@ -170,10 +257,22 @@ function sumeshStrategy(candles) {
   return {
     signal: lastSignal,
     reason: lastReason,
-    utBotPos: pos,
-    utBotTrail: ts,
-    stDirection: stDir[N - 1],
-    supertrend: stLine[N - 1]
+    trending,
+    greenPos: green.pos[N - 1],
+    bluePos: blue.pos[N - 1],
+    cyanPos: cyan.pos[N - 1],
+    purplePos: purple.pos[N - 1],
+    tealPos: teal.pos[N - 1],
+    goldPos: gold.pos[N - 1],
+    greenTrail: green.trail[N - 1],
+    blueTrail: blue.trail[N - 1],
+    cyanTrail: cyan.trail[N - 1],
+    purpleTrail: purple.trail[N - 1],
+    tealTrail: teal.trail[N - 1],
+    goldTrail: gold.trail[N - 1],
+    ema10: ema10[N - 1],
+    ema30: ema30[N - 1],
+    close: C[N - 1]
   };
 }
 
