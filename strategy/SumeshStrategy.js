@@ -143,6 +143,9 @@ function sumeshStrategy(candles) {
   // Pending PURPLE sell state
   let pendingPurpleSell = { active: false, high: 0, low: 0 };
 
+  // BOOMBUY gate: only armed after a fresh BLUE bullish flip, disarmed after firing
+  let boomBuyArmed = false;
+
   for (let i = 1; i < N; i++) {
     const blueBull  = blue.pos[i] === 1;
     const greenBull = green.pos[i] === 1;
@@ -173,6 +176,9 @@ function sumeshStrategy(candles) {
 
     // TRENDING: true when all 6 UT Bots are bullish on this candle
     trending = blueBull && greenBull && cyanBull && purpleBull && tealBull && goldBull;
+
+    // Arm BOOMBUY on fresh BLUE bullish flip
+    if (blueFlipBuy) boomBuyArmed = true;
 
     let sig = "WAIT", reason = "No signal";
 
@@ -213,9 +219,11 @@ function sumeshStrategy(candles) {
     }
 
     // ── BOOMBUY: BLUE & TEAL already bullish, GOLD flips bullish ──
-    if (sig === "WAIT" && blueBull && tealBull && goldFlipBuy) {
+    //           + boomBuyArmed (requires a fresh BLUE bullish flip since last BOOMBUY)
+    if (sig === "WAIT" && blueBull && tealBull && goldFlipBuy && boomBuyArmed) {
       sig = "BOOMBUY";
       reason = "GOLD flip bullish (K3/ATR300) while BLUE & TEAL bullish";
+      boomBuyArmed = false;
     }
     // ── BUY: TEAL flips bullish ──
     else if (sig === "WAIT" && tealFlipBuy) {
