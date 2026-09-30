@@ -17,7 +17,9 @@
 //           OR BLUE flips bullish,
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish.
-// BOOMBUY:  BLUE and TEAL already bullish, and GOLD flips bullish.
+// BOOMBUY:  BLUE and TEAL already bullish, and GOLD flips bullish,
+//           within 4 candles of the latest BLUE or TEAL bullish flip
+//           (proximity — avoids late GOLD flips at trend top).
 // SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
 //           PURPLE flips bearish → conditional:
 //             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
@@ -146,6 +148,10 @@ function sumeshStrategy(candles) {
   // BOOMBUY gate: only armed after a fresh BLUE bullish flip, disarmed after firing
   let boomBuyArmed = false;
 
+  // Proximity tracking: candle index of latest BLUE/TEAL bullish flip
+  let lastBlueFlipBuyIdx = -Infinity;
+  let lastTealFlipBuyIdx = -Infinity;
+
   for (let i = 1; i < N; i++) {
     const blueBull  = blue.pos[i] === 1;
     const greenBull = green.pos[i] === 1;
@@ -177,8 +183,9 @@ function sumeshStrategy(candles) {
     // TRENDING: true when all 6 UT Bots are bullish on this candle
     trending = blueBull && greenBull && cyanBull && purpleBull && tealBull && goldBull;
 
-    // Arm BOOMBUY on fresh BLUE bullish flip
-    if (blueFlipBuy) boomBuyArmed = true;
+    // Arm BOOMBUY on fresh BLUE bullish flip, and record flip indices for proximity
+    if (blueFlipBuy) { boomBuyArmed = true; lastBlueFlipBuyIdx = i; }
+    if (tealFlipBuy) lastTealFlipBuyIdx = i;
 
     let sig = "WAIT", reason = "No signal";
 
@@ -220,7 +227,9 @@ function sumeshStrategy(candles) {
 
     // ── BOOMBUY: BLUE & TEAL already bullish, GOLD flips bullish ──
     //           + boomBuyArmed (requires a fresh BLUE bullish flip since last BOOMBUY)
-    if (sig === "WAIT" && blueBull && tealBull && goldFlipBuy && boomBuyArmed) {
+    //           + within 4 candles of the latest BLUE or TEAL bullish flip (proximity)
+    const goldInProximity = (i - lastBlueFlipBuyIdx <= 4) || (i - lastTealFlipBuyIdx <= 4);
+    if (sig === "WAIT" && blueBull && tealBull && goldFlipBuy && boomBuyArmed && goldInProximity) {
       sig = "BOOMBUY";
       reason = "GOLD flip bullish (K3/ATR300) while BLUE & TEAL bullish";
       boomBuyArmed = false;
