@@ -27,8 +27,6 @@
 //               Subsequent candles are watched until any signal fires or PURPLE
 //               flips bullish:
 //               (a) candle HA low ≤ 30EMA → confirm SELL.
-//               (b) candle HA high < pending HIGH AND HA low < pending LOW
-//                   (lower high + lower low) → confirm SELL.
 // REENTER:  Both GREEN and BLUE and CYAN are bullish, and PURPLE becomes bullish,
 //           AND 10EMA is already above 30EMA (upward cross has occurred),
 //           AND the PURPLE flip candle's HA low is not below 30EMA (strict).
@@ -217,10 +215,6 @@ function sumeshStrategy(candles) {
       if (touchesEma30) {
         sig = "SELL";
         reason = "Pending PURPLE sell confirmed: candle touches 30EMA";
-        pendingPurpleSell = { active: false, high: 0, low: 0 };
-      } else if (H[i] < pendingPurpleSell.high && L[i] < pendingPurpleSell.low) {
-        sig = "SELL";
-        reason = "Pending PURPLE sell confirmed: lower high & lower low than PURPLE sell candle";
         pendingPurpleSell = { active: false, high: 0, low: 0 };
       }
     }
