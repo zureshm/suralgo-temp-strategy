@@ -28,11 +28,11 @@
 //           candle's HA low is above 30EMA (not touching/crossing).
 // SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
 //           PURPLE flips bearish → conditional:
-//             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
+//             - If candle HA close ≤ 30EMA (touching/crossing) → immediate SELL.
 //             - If NOT touching 30EMA → pending PURPLE sell stored in memory.
 //               Subsequent candles are watched until any signal fires or PURPLE
 //               flips bullish:
-//               (a) candle HA low ≤ 30EMA → confirm SELL.
+//               (a) candle HA close ≤ 30EMA → confirm SELL.
 // REENTER:  Both GREEN and BLUE and CYAN are bullish, and PURPLE becomes bullish,
 //           AND 10EMA is already above 30EMA (upward cross has occurred),
 //           AND the PURPLE flip candle's HA low is not below 30EMA (strict).
@@ -188,7 +188,7 @@ function utGptStrategy2(candles) {
     const emaCrossedUp = e10 != null && e30 != null && e10 > e30;
     const haLowVsEma30 = e30 != null ? L[i] >= e30 : false; // strict: HA low must be at or above 30EMA
     const haLowAboveEma30 = e30 != null ? L[i] > e30 : false; // stricter: HA low above 30EMA (not touching)
-    const touchesEma30  = e30 != null ? L[i] <= e30 : false; // candle touches or crosses below 30EMA
+    const touchesEma30  = e30 != null ? C[i] <= e30 : false; // candle HA close touches or crosses below 30EMA
 
     // TRENDING: true when all 8 UT Bots are bullish on this candle
     trending = blueBull && greenBull && cyanBull && purpleBull && tealBull && goldBull && silverBull && platinumBull;
@@ -214,7 +214,7 @@ function utGptStrategy2(candles) {
     else if (purpleFlipSell && !purpleFlipBuy) {
       if (touchesEma30) {
         sig = "SELL";
-        reason = "PURPLE flip bearish, candle touches 30EMA";
+        reason = "PURPLE flip bearish, candle HA close touches 30EMA";
         pendingPurpleSell = { active: false, high: 0, low: 0 };
       } else {
         // Not touching 30EMA → store pending, wait for confirmation
@@ -226,7 +226,7 @@ function utGptStrategy2(candles) {
     else if (pendingPurpleSell.active && !purpleFlipBuy) {
       if (touchesEma30) {
         sig = "SELL";
-        reason = "Pending PURPLE sell confirmed: candle touches 30EMA";
+        reason = "Pending PURPLE sell confirmed: candle HA close touches 30EMA";
         pendingPurpleSell = { active: false, high: 0, low: 0 };
       }
     }
