@@ -18,7 +18,8 @@
 // BUY:      TEAL flips bullish,
 //           OR BLUE flips bullish,
 //           OR BLUE already bullish and GREEN flips bullish,
-//           OR BLUE & GREEN already bullish and CYAN flips bullish.
+//           OR BLUE & GREEN already bullish and CYAN flips bullish
+//           (only before 10:30 AM).
 //           (All BUY/BOOMBUY signals require PLATINUM bullish.)
 // BOOMBUY:  BLUE and TEAL already bullish, and GOLD flips bullish,
 //           within 4 candles of the latest BLUE or TEAL bullish flip
@@ -145,6 +146,13 @@ function utGptStrategy2(candles) {
   const ema10 = emaSeries(C, 10); // 10EMA on Heikin-Ashi close
   const ema30 = emaSeries(C, 30); // 30EMA on Heikin-Ashi close
 
+  // CYAN BUY cutoff: only allowed before 10:30 AM (candle time)
+  const cyanBuyTimeOK = candles.map(cd => {
+    const m = /(\d{1,2}):(\d{2})/.exec(String(cd && cd.time));
+    if (!m) return true;
+    return Number(m[1]) * 60 + Number(m[2]) < 10 * 60 + 30;
+  });
+
   let lastSignal = "WAIT", lastReason = "No signal";
   let trending = false;
 
@@ -262,8 +270,8 @@ function utGptStrategy2(candles) {
       sig = "BUY";
       reason = "GREEN flip bullish (K2/ATR10) while BLUE bullish";
     }
-    // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish ──
-    else if (sig === "WAIT" && platinumBull && blueBull && greenBull && cyanFlipBuy) {
+    // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish (only before 10:30 AM) ──
+    else if (sig === "WAIT" && platinumBull && blueBull && greenBull && cyanFlipBuy && cyanBuyTimeOK[i]) {
       sig = "BUY";
       reason = "CYAN flip bullish (K2/ATR300) while BLUE & GREEN bullish";
     }
