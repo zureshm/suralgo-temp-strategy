@@ -15,12 +15,12 @@
 //
 // Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
 //
-// BUY:      TEAL flips bullish,
+// BUY:      TEAL flips bullish (no PLATINUM required),
 //           OR BLUE flips bullish,
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish
 //           (only before 10:30 AM).
-//           (All BUY/BOOMBUY signals require PLATINUM bullish.)
+//           (All BUY/BOOMBUY signals require PLATINUM bullish, except TEAL flip.)
 // BOOMBUY:  BLUE and TEAL already bullish, and GOLD flips bullish,
 //           within 4 candles of the latest BLUE or TEAL bullish flip
 //           (proximity — avoids late GOLD flips at trend top).
@@ -261,8 +261,8 @@ function utGptStrategy2(candles) {
       sig = "BOOMBUY";
       reason = "SILVER flip bullish (K1/ATR300) while GREEN & BLUE & CYAN bullish, 10EMA>30EMA for 10+ candles, HA low above 30EMA";
     }
-    // ── BUY: TEAL flips bullish ──
-    else if (sig === "WAIT" && platinumBull && tealFlipBuy) {
+    // ── BUY: TEAL flips bullish (no PLATINUM required) ──
+    else if (sig === "WAIT" && tealFlipBuy) {
       sig = "BUY";
       reason = "TEAL flip bullish (K4/ATR10)";
     }
