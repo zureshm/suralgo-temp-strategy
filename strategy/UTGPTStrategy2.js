@@ -14,8 +14,9 @@
 //
 // Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
 //
-// BUY:      BLUE flips bullish (only if TEAL was NOT already bullish on a
-//           previous candle — a same-candle TEAL+BLUE flip still buys),
+// BUY:      BLUE flips bullish (blocked if TEAL flipped bullish TODAY at/after
+//           10:00 and is still bullish — TEAL flipped yesterday/before 10:00 or
+//           a same-candle TEAL+BLUE flip still buys),
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish
 //           (only before 10:30 AM).
@@ -144,12 +145,14 @@ function utGptStrategy2(candles) {
   const ema10 = emaSeries(C, 10); // 10EMA on Heikin-Ashi close
   const ema30 = emaSeries(C, 30); // 30EMA on Heikin-Ashi close
 
-  // CYAN BUY cutoff: only allowed before 10:30 AM (candle time)
-  const cyanBuyTimeOK = candles.map(cd => {
+  // Candle time in minutes (HH:MM) — used by CYAN cutoff, day-boundary and TEAL-after-10AM checks
+  const candleMinutes = candles.map(cd => {
     const m = /(\d{1,2}):(\d{2})/.exec(String(cd && cd.time));
-    if (!m) return true;
-    return Number(m[1]) * 60 + Number(m[2]) < 10 * 60 + 30;
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
   });
+
+  // CYAN BUY cutoff: only allowed before 10:30 AM (candle time)
+  const cyanBuyTimeOK = candleMinutes.map(mins => (mins == null ? true : mins < 10 * 60 + 30));
 
   let lastSignal = "WAIT", lastReason = "No signal";
   let trending = false;
@@ -163,6 +166,9 @@ function utGptStrategy2(candles) {
   // Proximity tracking: candle index of latest BLUE/TEAL bullish flip
   let lastBlueFlipBuyIdx = -Infinity;
   let lastTealFlipBuyIdx = -Infinity;
+
+  // Candle index where the current trading day starts (detected by time going backwards)
+  let dayStartIdx = 0;
 
   // Consecutive candles with 10EMA above 30EMA (for SILVER BOOMBUY maturity check)
   let emaUpStreak = 0;
@@ -203,9 +209,22 @@ function utGptStrategy2(candles) {
     // TRENDING: true when all 7 UT Bots are bullish on this candle
     trending = blueBull && greenBull && cyanBull && purpleBull && tealBull && goldBull && silverBull;
 
+    // New trading day starts when candle time goes backwards (e.g. 15:30 → 09:15)
+    if (candleMinutes[i] != null && candleMinutes[i - 1] != null && candleMinutes[i] < candleMinutes[i - 1]) {
+      dayStartIdx = i;
+    }
+
     // Arm BOOMBUY on fresh BLUE bullish flip, and record flip indices for proximity
     if (blueFlipBuy) { boomBuyArmed = true; lastBlueFlipBuyIdx = i; }
     if (tealFlipBuy) lastTealFlipBuyIdx = i;
+
+    // TEAL blocks BLUE BUY only if its last bullish flip happened TODAY at/after 10:00.
+    // TEAL carried over from yesterday, or flipped before 10:00, does NOT block.
+    // Unparseable flip time is treated as counting (blocks).
+    const tealFlipMin = lastTealFlipBuyIdx >= 0 ? candleMinutes[lastTealFlipBuyIdx] : null;
+    const tealBlocksBlue = teal.pos[i - 1] === 1
+      && lastTealFlipBuyIdx >= dayStartIdx
+      && (tealFlipMin == null || tealFlipMin >= 10 * 60);
 
     let sig = "WAIT", reason = "No signal";
 
@@ -258,9 +277,9 @@ function utGptStrategy2(candles) {
       reason = "SILVER flip bullish (K1/ATR300) while GREEN & BLUE & CYAN bullish, 10EMA>30EMA for 10+ candles, HA low above 30EMA";
     }
     // ── BUY: BLUE flips bullish ──
-    // Blocked if TEAL was already bullish on the previous candle.
-    // Same-candle TEAL flip (teal.pos[i-1] !== 1) does NOT block.
-    else if (sig === "WAIT" && blueFlipBuy && teal.pos[i - 1] !== 1) {
+    // Blocked if TEAL was already bullish via a flip TODAY at/after 10:00.
+    // Same-candle TEAL flip, or TEAL flipped yesterday/before 10:00, does NOT block.
+    else if (sig === "WAIT" && blueFlipBuy && !tealBlocksBlue) {
       sig = "BUY";
       reason = "BLUE flip bullish (K3/ATR10)";
     }
