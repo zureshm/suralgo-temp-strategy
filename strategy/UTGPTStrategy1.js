@@ -1,77 +1,136 @@
 // =============================================================================
-// UTGPTStrategy1 — Penta UT Bot Strategy (Heikin-Ashi)
+// UTGPTStrategy1 — NIFTY Smart Liquidity Breakout
 //
-// INDICATORS & CONFIGURATION:
-//   - GREEN  (UT Bot 1): Key Value = 2, ATR Period = 10
-//   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
-//   - CYAN   (UT Bot 3): Key Value = 2, ATR Period = 300
-//   - PURPLE (UT Bot 4): Key Value = 1, ATR Period = 10
-//   - TEAL   (UT Bot 5): Key Value = 1, ATR Period = 16
+// Converted from Pine Script "NIFTY Smart Liquidity Breakout" (v5).
+// Candles are converted to Heikin-Ashi before all indicator calculations.
 //
-// Candles are converted to Heikin-Ashi before UT Bot calculation.
+// INDICATORS:
+//   - EMA Fast (20) and EMA Slow (50) on close
+//   - VWAP (session-reset, close × volume weighted)
+//   - Supertrend (factor=3.0, ATR=10)
+//   - ATR(14) with SMA(20) for volatility filter
+//   - Swing High/Low: highest/lowest over last 10 bars (shifted 1)
 //
-// BUY:      BLUE flips bullish,
-//           OR BLUE already bullish and GREEN flips bullish,
-//           OR BLUE & GREEN already bullish and CYAN flips bullish.
-// SELL:     CYAN or GREEN or BLUE or PURPLE flips bearish.
-// REENTER:  Both GREEN and BLUE are bullish, and PURPLE becomes bullish.
-// REEXIT:   Both BLUE and GREEN are bullish, and TEAL becomes bearish.
+// BUY:  Not in trade, cooldown OK (20 bars since last signal),
+//       bullTrend: EMA20 > EMA50, close > VWAP, Supertrend bullish (dir<0), volatilityOK,
+//       bullBreakout: close > swingHigh AND close > prev high.
+//
+// SELL: In trade, and any of:
+//       EMA20 crosses under EMA50, OR Supertrend turns bearish (dir>0),
+//       OR close < swingLow.
+//
+// NOTE: Pine Script HTF (5-min) filter omitted — no multi-timeframe support.
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
 
-function trueRangeSeries(H, L, C) {
+function _emaSeries(src, period) {
+  const out = new Array(src.length).fill(null);
+  if (src.length < period) return out;
+  const k = 2 / (period + 1);
+  let s = 0;
+  for (let i = 0; i < period; i++) s += src[i];
+  out[period - 1] = s / period;
+  for (let i = period; i < src.length; i++) out[i] = src[i] * k + out[i - 1] * (1 - k);
+  return out;
+}
+
+function _smaSeries(src, period) {
+  const out = new Array(src.length).fill(null);
+  for (let i = period - 1; i < src.length; i++) {
+    let sum = 0, valid = true;
+    for (let j = i - period + 1; j <= i; j++) {
+      if (src[j] == null) { valid = false; break; }
+      sum += src[j];
+    }
+    if (valid) out[i] = sum / period;
+  }
+  return out;
+}
+
+function _atrSeries(H, L, C, period) {
+  // True range
   const tr = [];
   for (let i = 0; i < C.length; i++) {
     if (i === 0) { tr.push(H[i] - L[i]); continue; }
     tr.push(Math.max(H[i] - L[i], Math.abs(H[i] - C[i - 1]), Math.abs(L[i] - C[i - 1])));
   }
-  return tr;
-}
-
-function rmaSeries(src, period) {
-  const out = new Array(src.length).fill(null);
-  if (src.length < period) return out;
+  // Wilder smoothing (RMA)
+  const out = new Array(C.length).fill(null);
+  if (C.length < period) return out;
   let s = 0;
-  for (let i = 0; i < period; i++) s += src[i];
+  for (let i = 0; i < period; i++) s += tr[i];
   out[period - 1] = s / period;
-  for (let i = period; i < src.length; i++) out[i] = (out[i - 1] * (period - 1) + src[i]) / period;
+  for (let i = period; i < C.length; i++) out[i] = (out[i - 1] * (period - 1) + tr[i]) / period;
   return out;
 }
 
-function atrSeries(H, L, C, period) { return rmaSeries(trueRangeSeries(H, L, C), period); }
-
-// ── Standard UT Bot (fixed key) ─────────────────────────────────────────────
-function utBotSeries(H, L, C, keyValue, atrPeriod) {
+function _supertrendSeries(H, L, C, factor, atrPeriod) {
   const N = C.length;
-  const atr = atrSeries(H, L, C, atrPeriod);
-  const posArr = new Array(N).fill(0);
-  const tsArr = new Array(N).fill(null);
+  const atr = _atrSeries(H, L, C, atrPeriod);
+  const dirArr = new Array(N).fill(1); // 1 = bearish, -1 = bullish
+  const stArr  = new Array(N).fill(null);
 
-  let ts = 0, pos = 0;
+  let upperBand = null, lowerBand = null, dir = 1;
+
   for (let i = 1; i < N; i++) {
-    if (atr[i] == null) { posArr[i] = pos; tsArr[i] = ts; continue; }
-    const nLoss = keyValue * atr[i];
-    const prevTS = ts;
+    if (atr[i] == null) { dirArr[i] = dir; continue; }
 
-    if (C[i] > prevTS && C[i - 1] > prevTS) {
-      ts = Math.max(prevTS, C[i] - nLoss);
-    } else if (C[i] < prevTS && C[i - 1] < prevTS) {
-      ts = Math.min(prevTS, C[i] + nLoss);
-    } else if (C[i] > prevTS) {
-      ts = C[i] - nLoss;
+    const hl2 = (H[i] + L[i]) / 2;
+    const basicUpper = hl2 + factor * atr[i];
+    const basicLower = hl2 - factor * atr[i];
+
+    // Upper band only moves down (or resets when price crosses above it)
+    let newUpper = (upperBand === null || basicUpper < upperBand || C[i - 1] > upperBand)
+      ? basicUpper : upperBand;
+
+    // Lower band only moves up (or resets when price crosses below it)
+    let newLower = (lowerBand === null || basicLower > lowerBand || C[i - 1] < lowerBand)
+      ? basicLower : lowerBand;
+
+    // Direction: 1 = bearish (price below upper band), -1 = bullish (price above lower band)
+    if (dir > 0) {
+      dir = C[i] > newUpper ? -1 : 1;
     } else {
-      ts = C[i] + nLoss;
+      dir = C[i] < newLower ? 1 : -1;
     }
 
-    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
-    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
-
-    posArr[i] = pos;
-    tsArr[i] = ts;
+    upperBand = newUpper;
+    lowerBand = newLower;
+    dirArr[i] = dir;
+    stArr[i]  = dir < 0 ? newLower : newUpper;
   }
 
-  return { pos: posArr, trail: tsArr };
+  return { dir: dirArr, st: stArr };
+}
+
+function _timeToMinutes(timeStr) {
+  if (!timeStr) return null;
+  const m = /(\d{1,2}):(\d{2})/.exec(String(timeStr));
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+function _vwapSeries(C, V, times) {
+  // Resets each session (when candle time-of-day goes backwards)
+  const N = C.length;
+  const out = new Array(N).fill(null);
+  let cumPV = 0, cumV = 0;
+  let prevMins = null;
+
+  for (let i = 0; i < N; i++) {
+    const curMins = _timeToMinutes(times[i]);
+    // New session detected
+    if (curMins !== null && prevMins !== null && curMins < prevMins) {
+      cumPV = 0;
+      cumV  = 0;
+    }
+    const vol = V[i] > 0 ? V[i] : 1; // avoid divide-by-zero; use 1 as fallback
+    cumPV += C[i] * vol;
+    cumV  += vol;
+    out[i] = cumPV / cumV;
+    prevMins = curMins;
+  }
+  return out;
 }
 
 // ── Main strategy ────────────────────────────────────────────────────────────
@@ -81,9 +140,13 @@ function utGptStrategy1(candles) {
     return { signal: "WAIT", reason: "Not enough data (need 100+)" };
   }
 
+  const N = candles.length;
+  const V     = candles.map(c => Number(c.volume) || 0);
+  const times = candles.map(c => c.time);
+
   // ── Convert to Heikin-Ashi ──
   const ha = [];
-  for (let i = 0; i < candles.length; i++) {
+  for (let i = 0; i < N; i++) {
     const o = Number(candles[i].open);
     const h = Number(candles[i].high);
     const l = Number(candles[i].low);
@@ -98,74 +161,87 @@ function utGptStrategy1(candles) {
   const H = ha.map(c => c.high);
   const L = ha.map(c => c.low);
   const C = ha.map(c => c.close);
-  const N = C.length;
 
-  const green  = utBotSeries(H, L, C, 2, 10); // GREEN  (Key=2, ATR=10)
-  const blue   = utBotSeries(H, L, C, 3, 10); // BLUE   (Key=3, ATR=10)
-  const cyan   = utBotSeries(H, L, C, 2, 300); // CYAN   (Key=2, ATR=300)
-  const purple = utBotSeries(H, L, C, 1, 10); // PURPLE (Key=1, ATR=10)
-  const teal   = utBotSeries(H, L, C, 1, 16); // TEAL   (Key=1, ATR=16)
+  // Parameters (matching Pine Script defaults)
+  const EMA_FAST    = 20;
+  const EMA_SLOW    = 50;
+  const ST_FACTOR   = 3.0;
+  const ST_ATR      = 10;
+  const SWING_LEN   = 10;
+  const ATR_LEN     = 14;
+  const COOLDOWN    = 20;
 
-  let lastSignal = "WAIT", lastReason = "No signal";
-  let trending = false;
+  // Indicators
+  const ema20  = _emaSeries(C, EMA_FAST);
+  const ema50  = _emaSeries(C, EMA_SLOW);
+  const atr14  = _atrSeries(H, L, C, ATR_LEN);
+  const atrAvg = _smaSeries(atr14, 20); // SMA(ATR, 20)
+  const vwap   = _vwapSeries(C, V, times);
+  const { dir: stDir, st: stVal } = _supertrendSeries(H, L, C, ST_FACTOR, ST_ATR);
+
+  // State (replayed from scratch each call — same model as other strategies)
+  let inTrade       = false;
+  let lastSignalBar = -Infinity;
+  let lastSignal    = "WAIT";
+  let lastReason    = "No signal";
 
   for (let i = 1; i < N; i++) {
-    const blueBull  = blue.pos[i] === 1;
-    const greenBull = green.pos[i] === 1;
+    // Skip until all indicators are available
+    if (ema20[i] == null || ema50[i] == null || atr14[i] == null || atrAvg[i] == null) continue;
+    // Need swingLen bars behind (shifted 1) — so i >= SWING_LEN + 1
+    if (i < SWING_LEN + 1) continue;
 
-    const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
-    const greenFlipBuy  = green.pos[i] === 1 && green.pos[i - 1] !== 1;
-    const cyanFlipBuy   = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
+    // ── Swing High/Low: highest/lowest of bars [i-SWING_LEN .. i-1] ──
+    let swingHigh = -Infinity, swingLow = Infinity;
+    for (let j = i - SWING_LEN; j < i; j++) {
+      if (H[j] > swingHigh) swingHigh = H[j];
+      if (L[j] < swingLow)  swingLow  = L[j];
+    }
 
-    const blueFlipSell  = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
-    const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
-    const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
+    // ── Volatility filter ──
+    const volatilityOK = atr14[i] > atrAvg[i];
 
-    const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
-    const purpleFlipSell = purple.pos[i] === -1 && purple.pos[i - 1] !== -1;
-    const tealFlipSell   = teal.pos[i] === -1 && teal.pos[i - 1] !== -1;
-    const cyanBull   = cyan.pos[i] === 1;
-    const purpleBull = purple.pos[i] === 1;
+    // ── Breakout ──
+    const bullBreakout = C[i] > swingHigh && C[i] > H[i - 1];
+    // (bearBreakout not needed — no short entries)
 
-    // TRENDING: true when all 4 UT Bots are bullish on this candle
-    trending = blueBull && greenBull && cyanBull && purpleBull;
+    // ── Trend ──
+    // htfBull (5-min multi-timeframe) omitted — no MTF support
+    const bullTrend =
+      ema20[i] > ema50[i] &&
+      C[i] > vwap[i] &&
+      stDir[i] < 0 &&      // Supertrend bullish
+      volatilityOK;
+
+    // ── Cooldown ──
+    const cooldownOK = (i - lastSignalBar) > COOLDOWN;
 
     let sig = "WAIT", reason = "No signal";
 
-    // ── SELL: CYAN or GREEN or BLUE or PURPLE flips bearish (checked first) ──
-    if (cyanFlipSell || greenFlipSell || blueFlipSell || purpleFlipSell) {
-      sig = "SELL";
-      const flips = [];
-      if (cyanFlipSell) flips.push("CYAN");
-      if (greenFlipSell) flips.push("GREEN");
-      if (blueFlipSell) flips.push("BLUE");
-      if (purpleFlipSell) flips.push("PURPLE");
-      reason = flips.join(" & ") + " flip bearish";
+    // ── BUY ──
+    if (!inTrade && cooldownOK && bullTrend && bullBreakout) {
+      sig    = "BUY";
+      reason = "Breakout above swing high — EMA20>EMA50, above VWAP, Supertrend bullish, ATR strong";
+      inTrade       = true;
+      lastSignalBar = i;
     }
-    // ── REEXIT: BLUE & GREEN bullish, TEAL flips bearish ──
-    else if (blueBull && greenBull && tealFlipSell) {
-      sig = "REEXIT";
-      reason = "TEAL re-exit flip bearish (K1/ATR16) while BLUE & GREEN bullish";
-    }
-    // ── BUY: BLUE flips bullish ──
-    else if (blueFlipBuy) {
-      sig = "BUY";
-      reason = "BLUE flip bullish (K3/ATR10)";
-    }
-    // ── BUY: BLUE already bullish, GREEN flips bullish ──
-    else if (blueBull && greenFlipBuy) {
-      sig = "BUY";
-      reason = "GREEN flip bullish (K2/ATR10) while BLUE bullish";
-    }
-    // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish ──
-    else if (blueBull && greenBull && cyanFlipBuy) {
-      sig = "BUY";
-      reason = "CYAN flip bullish (K1/ATR10) while BLUE & GREEN bullish";
-    }
-    // ── REENTER: BLUE & GREEN bullish, PURPLE flips bullish ──
-    else if (blueBull && greenBull && purpleFlipBuy) {
-      sig = "REENTER";
-      reason = "PURPLE re-entry flip bullish (K1/ATR1) while BLUE & GREEN bullish";
+
+    // ── SELL (exit) ──
+    if (inTrade && sig === "WAIT") {
+      const ema20CrossUnder = ema20[i] < ema50[i] && ema20[i - 1] >= ema50[i - 1];
+      const stBearish       = stDir[i] > 0;
+      const belowSwingLow   = C[i] < swingLow;
+
+      if (ema20CrossUnder || stBearish || belowSwingLow) {
+        const parts = [];
+        if (ema20CrossUnder) parts.push("EMA20 crossed under EMA50");
+        if (stBearish)       parts.push("Supertrend turned bearish");
+        if (belowSwingLow)   parts.push("close below swing low");
+        sig    = "SELL";
+        reason = parts.join(", ");
+        inTrade       = false;
+        lastSignalBar = i;
+      }
     }
 
     lastSignal = sig;
@@ -173,20 +249,16 @@ function utGptStrategy1(candles) {
   }
 
   return {
-    signal: lastSignal,
-    reason: lastReason,
-    trending,
-    greenPos: green.pos[N - 1],
-    bluePos: blue.pos[N - 1],
-    cyanPos: cyan.pos[N - 1],
-    purplePos: purple.pos[N - 1],
-    greenTrail: green.trail[N - 1],
-    blueTrail: blue.trail[N - 1],
-    cyanTrail: cyan.trail[N - 1],
-    purpleTrail: purple.trail[N - 1],
-    tealPos: teal.pos[N - 1],
-    tealTrail: teal.trail[N - 1],
-    close: C[N - 1]
+    signal:    lastSignal,
+    reason:    lastReason,
+    inTrade,
+    ema20:     ema20[N - 1],
+    ema50:     ema50[N - 1],
+    vwap:      vwap[N - 1],
+    stDir:     stDir[N - 1],
+    stVal:     stVal[N - 1],
+    atr:       atr14[N - 1],
+    close:     C[N - 1]
   };
 }
 
