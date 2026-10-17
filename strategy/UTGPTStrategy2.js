@@ -19,7 +19,9 @@
 //           a same-candle TEAL+BLUE flip still buys),
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish
-//           (only before 10:30 AM).
+//           (only before 10:30 AM),
+//           OR TEAL flips bullish after 10:00 AM (fallback: max 1 per day,
+//           only if no other BUY has fired in current cycle).
 // BOOMBUY:  BLUE and TEAL already bullish, and GOLD flips bullish,
 //           within 4 candles of the latest BLUE or TEAL bullish flip
 //           (proximity — avoids late GOLD flips at trend top).
@@ -173,6 +175,11 @@ function utGptStrategy2(candles) {
   // Consecutive candles with 10EMA above 30EMA (for SILVER BOOMBUY maturity check)
   let emaUpStreak = 0;
 
+  // Track TEAL 1-BUY fallback rule: max 1 TEAL BUY per trading day (after 10:00 AM)
+  let tealBuyFiredToday = false;
+  // Track whether any BUY signal fired in current cycle (since last SELL or day start)
+  let hadBuySinceLastExit = false;
+
   for (let i = 1; i < N; i++) {
     const blueBull  = blue.pos[i] === 1;
     const greenBull = green.pos[i] === 1;
@@ -212,6 +219,8 @@ function utGptStrategy2(candles) {
     // New trading day starts when candle time goes backwards (e.g. 15:30 → 09:15)
     if (candleMinutes[i] != null && candleMinutes[i - 1] != null && candleMinutes[i] < candleMinutes[i - 1]) {
       dayStartIdx = i;
+      tealBuyFiredToday = false;
+      hadBuySinceLastExit = false;
     }
 
     // Arm BOOMBUY on fresh BLUE bullish flip, and record flip indices for proximity
@@ -237,6 +246,7 @@ function utGptStrategy2(candles) {
       if (blueFlipSell) flips.push("BLUE");
       reason = flips.join(" & ") + " flip bearish";
       pendingPurpleSell = { active: false, high: 0, low: 0 }; // clear pending
+      hadBuySinceLastExit = false;
     }
     // ── SELL: PURPLE flips bearish (conditional on 30EMA) ──
     // Note: PURPLE bullish flip cancels pending BEFORE this block (checked below)
@@ -245,6 +255,7 @@ function utGptStrategy2(candles) {
         sig = "SELL";
         reason = "PURPLE flip bearish, candle HA close touches 30EMA";
         pendingPurpleSell = { active: false, high: 0, low: 0 };
+        hadBuySinceLastExit = false;
       } else {
         // Not touching 30EMA → store pending, wait for confirmation
         pendingPurpleSell = { active: true, high: H[i], low: L[i] };
@@ -257,6 +268,7 @@ function utGptStrategy2(candles) {
         sig = "SELL";
         reason = "Pending PURPLE sell confirmed: candle HA close touches 30EMA";
         pendingPurpleSell = { active: false, high: 0, low: 0 };
+        hadBuySinceLastExit = false;
       }
     }
 
@@ -293,12 +305,22 @@ function utGptStrategy2(candles) {
       sig = "BUY";
       reason = "CYAN flip bullish (K2/ATR300) while BLUE & GREEN bullish";
     }
+    // ── BUY: TEAL flips bullish after 10:00 AM (fallback: max 1 per day, if no BUY yet in cycle) ──
+    else if (sig === "WAIT" && tealFlipBuy && candleMinutes[i] != null && candleMinutes[i] >= 10 * 60 && !tealBuyFiredToday && !hadBuySinceLastExit) {
+      sig = "BUY";
+      reason = "TEAL flip bullish (K4/ATR10) after 10:00 AM";
+      tealBuyFiredToday = true;
+    }
     // ── REENTER: BLUE & GREEN & CYAN bullish, PURPLE flips bullish ──
     //           + 10EMA above 30EMA (upward cross already occurred)
     //           + PURPLE flip candle HA low not below 30EMA (strict)
     else if (sig === "WAIT" && blueBull && greenBull && cyanBull && purpleFlipBuy && emaCrossedUp && haLowVsEma30) {
       sig = "REENTER";
       reason = "PURPLE re-entry flip bullish (K1/ATR10) while BLUE & GREEN & CYAN bullish, 10EMA>30EMA, HA low above 30EMA";
+    }
+
+    if (sig === "BUY" || sig === "BOOMBUY" || sig === "REENTER") {
+      hadBuySinceLastExit = true;
     }
 
     // Clear pending PURPLE sell if any BUY/BOOMBUY/REENTER signal fired, or PURPLE flipped bullish
