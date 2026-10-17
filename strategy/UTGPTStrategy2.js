@@ -1,5 +1,5 @@
 // =============================================================================
-// UTGPTStrategy2 — Sept UT Bot Strategy with EMA-gated Re-entry (Heikin-Ashi)
+// UTGPTStrategy2 — Quint UT Bot Strategy with EMA-gated Re-entry (Heikin-Ashi)
 // (Replica of UTGPTStrategy3)
 //
 // INDICATORS & CONFIGURATION:
@@ -10,17 +10,15 @@
 //   - TEAL   (UT Bot 5): Key Value = 4, ATR Period = 10
 //   - GOLD   (UT Bot 6): Key Value = 3, ATR Period = 300
 //   - SILVER (UT Bot 7): Key Value = 1, ATR Period = 300
-//   - PLATINUM (UT Bot 8): Key Value = 5, ATR Period = 10
 //   - 10EMA and 30EMA calculated on Heikin-Ashi close.
 //
 // Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
 //
-// BUY:      TEAL flips bullish (no PLATINUM required),
-//           OR BLUE flips bullish,
+// BUY:      BLUE flips bullish (only if TEAL was NOT already bullish on a
+//           previous candle — a same-candle TEAL+BLUE flip still buys),
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish
 //           (only before 10:30 AM).
-//           (All BUY/BOOMBUY signals require PLATINUM bullish, except TEAL flip.)
 // BOOMBUY:  BLUE and TEAL already bullish, and GOLD flips bullish,
 //           within 4 candles of the latest BLUE or TEAL bullish flip
 //           (proximity — avoids late GOLD flips at trend top).
@@ -142,7 +140,6 @@ function utGptStrategy2(candles) {
   const teal   = utBotSeries(H, L, C, 4, 10); // TEAL   (Key=4, ATR=10)
   const gold   = utBotSeries(H, L, C, 3, 300); // GOLD   (Key=3, ATR=300)
   const silver = utBotSeries(H, L, C, 1, 300); // SILVER (Key=1, ATR=300)
-  const platinum = utBotSeries(H, L, C, 5, 10); // PLATINUM (Key=5, ATR=10)
 
   const ema10 = emaSeries(C, 10); // 10EMA on Heikin-Ashi close
   const ema30 = emaSeries(C, 30); // 30EMA on Heikin-Ashi close
@@ -178,7 +175,6 @@ function utGptStrategy2(candles) {
     const tealBull   = teal.pos[i] === 1;
     const goldBull   = gold.pos[i] === 1;
     const silverBull = silver.pos[i] === 1;
-    const platinumBull = platinum.pos[i] === 1;
 
     const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
     const greenFlipBuy  = green.pos[i] === 1 && green.pos[i - 1] !== 1;
@@ -204,8 +200,8 @@ function utGptStrategy2(candles) {
     const haLowAboveEma30 = e30 != null ? L[i] > e30 : false; // stricter: HA low above 30EMA (not touching)
     const touchesEma30  = e30 != null ? C[i] <= e30 : false; // candle HA close touches or crosses below 30EMA
 
-    // TRENDING: true when all 8 UT Bots are bullish on this candle
-    trending = blueBull && greenBull && cyanBull && purpleBull && tealBull && goldBull && silverBull && platinumBull;
+    // TRENDING: true when all 7 UT Bots are bullish on this candle
+    trending = blueBull && greenBull && cyanBull && purpleBull && tealBull && goldBull && silverBull;
 
     // Arm BOOMBUY on fresh BLUE bullish flip, and record flip indices for proximity
     if (blueFlipBuy) { boomBuyArmed = true; lastBlueFlipBuyIdx = i; }
@@ -249,7 +245,7 @@ function utGptStrategy2(candles) {
     //           + boomBuyArmed (requires a fresh BLUE bullish flip since last BOOMBUY)
     //           + within 4 candles of the latest BLUE or TEAL bullish flip (proximity)
     const goldInProximity = (i - lastBlueFlipBuyIdx <= 4) || (i - lastTealFlipBuyIdx <= 4);
-    if (sig === "WAIT" && platinumBull && blueBull && tealBull && goldFlipBuy && boomBuyArmed && goldInProximity) {
+    if (sig === "WAIT" && blueBull && tealBull && goldFlipBuy && boomBuyArmed && goldInProximity) {
       sig = "BOOMBUY";
       reason = "GOLD flip bullish (K3/ATR300) while BLUE & TEAL bullish";
       boomBuyArmed = false;
@@ -257,27 +253,24 @@ function utGptStrategy2(candles) {
     // ── BOOMBUY (SILVER): GREEN & BLUE & CYAN bullish, SILVER flips bullish ──
     //           + 10EMA above 30EMA for at least 10 candles (mature cross)
     //           + SILVER flip candle HA low above 30EMA (not touching/crossing)
-    else if (sig === "WAIT" && platinumBull && greenBull && blueBull && cyanBull && silverFlipBuy && emaCrossMature && haLowAboveEma30) {
+    else if (sig === "WAIT" && greenBull && blueBull && cyanBull && silverFlipBuy && emaCrossMature && haLowAboveEma30) {
       sig = "BOOMBUY";
       reason = "SILVER flip bullish (K1/ATR300) while GREEN & BLUE & CYAN bullish, 10EMA>30EMA for 10+ candles, HA low above 30EMA";
     }
-    // ── BUY: TEAL flips bullish (no PLATINUM required) ──
-    else if (sig === "WAIT" && tealFlipBuy) {
-      sig = "BUY";
-      reason = "TEAL flip bullish (K4/ATR10)";
-    }
     // ── BUY: BLUE flips bullish ──
-    else if (sig === "WAIT" && platinumBull && blueFlipBuy) {
+    // Blocked if TEAL was already bullish on the previous candle.
+    // Same-candle TEAL flip (teal.pos[i-1] !== 1) does NOT block.
+    else if (sig === "WAIT" && blueFlipBuy && teal.pos[i - 1] !== 1) {
       sig = "BUY";
       reason = "BLUE flip bullish (K3/ATR10)";
     }
     // ── BUY: BLUE already bullish, GREEN flips bullish ──
-    else if (sig === "WAIT" && platinumBull && blueBull && greenFlipBuy) {
+    else if (sig === "WAIT" && blueBull && greenFlipBuy) {
       sig = "BUY";
       reason = "GREEN flip bullish (K2/ATR10) while BLUE bullish";
     }
     // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish (only before 10:30 AM) ──
-    else if (sig === "WAIT" && platinumBull && blueBull && greenBull && cyanFlipBuy && cyanBuyTimeOK[i]) {
+    else if (sig === "WAIT" && blueBull && greenBull && cyanFlipBuy && cyanBuyTimeOK[i]) {
       sig = "BUY";
       reason = "CYAN flip bullish (K2/ATR300) while BLUE & GREEN bullish";
     }
@@ -309,7 +302,6 @@ function utGptStrategy2(candles) {
     tealPos: teal.pos[N - 1],
     goldPos: gold.pos[N - 1],
     silverPos: silver.pos[N - 1],
-    platinumPos: platinum.pos[N - 1],
     greenTrail: green.trail[N - 1],
     blueTrail: blue.trail[N - 1],
     cyanTrail: cyan.trail[N - 1],
@@ -317,7 +309,6 @@ function utGptStrategy2(candles) {
     tealTrail: teal.trail[N - 1],
     goldTrail: gold.trail[N - 1],
     silverTrail: silver.trail[N - 1],
-    platinumTrail: platinum.trail[N - 1],
     ema10: ema10[N - 1],
     ema30: ema30[N - 1],
     close: C[N - 1]

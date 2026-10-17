@@ -11,8 +11,8 @@
 //
 // Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
 //
-// BUY:      TEAL flips bullish,
-//           OR BLUE flips bullish,
+// BUY:      BLUE flips bullish (only if TEAL was NOT already bullish on a
+//           previous candle — a same-candle TEAL+BLUE flip still buys),
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish
 //           (only before 10:30 AM).
@@ -214,13 +214,10 @@ function utGptStrategy4(candles) {
       }
     }
 
-    // ── BUY: TEAL flips bullish ──
-    if (sig === "WAIT" && tealFlipBuy) {
-      sig = "BUY";
-      reason = "TEAL flip bullish (K4/ATR10)";
-    }
     // ── BUY: BLUE flips bullish ──
-    else if (sig === "WAIT" && blueFlipBuy) {
+    // Blocked if TEAL was already bullish on the previous candle.
+    // Same-candle TEAL flip (teal.pos[i-1] !== 1) does NOT block.
+    if (sig === "WAIT" && blueFlipBuy && teal.pos[i - 1] !== 1) {
       sig = "BUY";
       reason = "BLUE flip bullish (K3/ATR10)";
     }
