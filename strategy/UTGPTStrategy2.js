@@ -27,8 +27,8 @@
 //           (proximity — avoids late GOLD flips at trend top).
 //           OR (SILVER variant): GREEN, BLUE, CYAN all bullish,
 //           SILVER flips bullish, 10EMA above 30EMA for at least 10 candles,
-//           and the SILVER flip
-//           candle's HA low is above 30EMA (not touching/crossing).
+//           EMA gap is widening (not parallel/sideways),
+//           and the SILVER flip candle's HA low is above 30EMA (not touching/crossing).
 // SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
 //           PURPLE flips bearish → conditional:
 //             - If candle HA close ≤ 30EMA (touching/crossing) → immediate SELL.
@@ -209,6 +209,10 @@ function utGptStrategy2(candles) {
     const emaCrossedUp = e10 != null && e30 != null && e10 > e30;
     emaUpStreak = emaCrossedUp ? emaUpStreak + 1 : 0;
     const emaCrossMature = emaUpStreak >= 10; // 10EMA above 30EMA for 10+ candles
+    // EMA gap must be widening (not parallel/sideways): gap now > gap 8 candles ago
+    const emaGapNow  = (e10 != null && e30 != null) ? e10 - e30 : null;
+    const emaGapPrev = (i >= 8 && ema10[i - 8] != null && ema30[i - 8] != null) ? ema10[i - 8] - ema30[i - 8] : null;
+    const emaGapWidening = emaGapNow != null && emaGapPrev != null && emaGapNow > emaGapPrev;
     const haLowVsEma30 = e30 != null ? L[i] >= e30 : false; // strict: HA low must be at or above 30EMA
     const haLowAboveEma30 = e30 != null ? L[i] > e30 : false; // stricter: HA low above 30EMA (not touching)
     const touchesEma30  = e30 != null ? C[i] <= e30 : false; // candle HA close touches or crosses below 30EMA
@@ -283,10 +287,11 @@ function utGptStrategy2(candles) {
     }
     // ── BOOMBUY (SILVER): GREEN & BLUE & CYAN bullish, SILVER flips bullish ──
     //           + 10EMA above 30EMA for at least 10 candles (mature cross)
+    //           + EMA gap must be widening (rules out flat/parallel sideways moves)
     //           + SILVER flip candle HA low above 30EMA (not touching/crossing)
-    else if (sig === "WAIT" && greenBull && blueBull && cyanBull && silverFlipBuy && emaCrossMature && haLowAboveEma30) {
+    else if (sig === "WAIT" && greenBull && blueBull && cyanBull && silverFlipBuy && emaCrossMature && emaGapWidening && haLowAboveEma30) {
       sig = "BOOMBUY";
-      reason = "SILVER flip bullish (K1/ATR300) while GREEN & BLUE & CYAN bullish, 10EMA>30EMA for 10+ candles, HA low above 30EMA";
+      reason = "SILVER flip bullish (K1/ATR300) while GREEN & BLUE & CYAN bullish, 10EMA>30EMA for 10+ candles, EMA gap widening, HA low above 30EMA";
     }
     // ── BUY: BLUE flips bullish ──
     // Blocked if TEAL was already bullish via a flip TODAY at/after 10:00.
