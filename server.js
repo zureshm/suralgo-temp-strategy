@@ -92,7 +92,7 @@ const strategies = {
 };
 
 // Active strategy (default)
-let activeStrategy = "HEIKIN_LUCKY_BOOM";
+let activeStrategy = "HEIKIN_DINKAN_RE";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};
