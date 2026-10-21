@@ -1,6 +1,5 @@
 // =============================================================================
 // UTGPTStrategy3 — Quint UT Bot Strategy with EMA-gated Re-entry (Heikin-Ashi)
-// (Replica of SumeshStrategy)
 //
 // INDICATORS & CONFIGURATION:
 //   - GREEN  (UT Bot 1): Key Value = 2, ATR Period = 10
@@ -8,34 +7,34 @@
 //   - CYAN   (UT Bot 3): Key Value = 2, ATR Period = 300
 //   - PURPLE (UT Bot 4): Key Value = 1, ATR Period = 10
 //   - TEAL   (UT Bot 5): Key Value = 4, ATR Period = 10
-//   - GOLD   (UT Bot 6): Key Value = 3, ATR Period = 300
-//   - SILVER (UT Bot 7): Key Value = 1, ATR Period = 300
+//   - INFRAGREEN (UT Bot 6): Key Value = 0.5, ATR Period = 10 (Auto-reentry trigger)
 //   - 10EMA and 30EMA calculated on Heikin-Ashi close.
 //
 // Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
 //
-// BUY:      TEAL flips bullish,
-//           OR BLUE flips bullish,
+// BUY:      BLUE flips bullish (blocked if TEAL flipped bullish TODAY at/after
+//           10:00 and is still bullish — TEAL flipped yesterday/before 10:00 or
+//           a same-candle TEAL+BLUE flip still buys),
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish
-//           (only before 10:30 AM).
-// BOOMBUY:  BLUE and TEAL already bullish, and GOLD flips bullish,
-//           within 4 candles of the latest BLUE or TEAL bullish flip
-//           (proximity — avoids late GOLD flips at trend top).
-//           OR (SILVER variant): GREEN, BLUE, CYAN all bullish,
-//           SILVER flips bullish, 10EMA above 30EMA for at least 10 candles,
-//           and the SILVER flip
-//           candle's HA low is above 30EMA (not touching/crossing).
+//           (only before 10:30 AM),
+//           OR TEAL flips bullish after 10:00 AM (fallback: max 1 per day,
+//           only if no other BUY has fired in current cycle).
 // SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
 //           PURPLE flips bearish → conditional:
-//             - If candle HA close ≤ 30EMA (touching/crossing) → immediate SELL.
+//             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
 //             - If NOT touching 30EMA → pending PURPLE sell stored in memory.
 //               Subsequent candles are watched until any signal fires or PURPLE
 //               flips bullish:
-//               (a) candle HA close ≤ 30EMA → confirm SELL.
+//               (a) candle HA low ≤ 30EMA → confirm SELL.
+//               (b) candle HA high < pending HIGH AND HA low < pending LOW
+//                   (lower high + lower low) → confirm SELL.
 // REENTER:  Both GREEN and BLUE and CYAN are bullish, and PURPLE becomes bullish,
 //           AND 10EMA is already above 30EMA (upward cross has occurred),
 //           AND the PURPLE flip candle's HA low is not below 30EMA (strict).
+// AUTO-REENTRY:
+//   - REENTRY_ON:  INFRAGREEN flips bullish while GREEN, BLUE, and PURPLE are bullish.
+//   - REENTRY_OFF: INFRAGREEN flips bearish while GREEN, BLUE, and PURPLE are bullish.
 //
 // =============================================================================
 
@@ -133,23 +132,24 @@ function utGptStrategy3(candles) {
   const C = ha.map(c => c.close);
   const N = C.length;
 
-  const green  = utBotSeries(H, L, C, 2, 10); // GREEN  (Key=2, ATR=10)
-  const blue   = utBotSeries(H, L, C, 3, 10); // BLUE   (Key=3, ATR=10)
-  const cyan   = utBotSeries(H, L, C, 2, 300); // CYAN   (Key=2, ATR=300)
-  const purple = utBotSeries(H, L, C, 1, 10); // PURPLE (Key=1, ATR=10)
-  const teal   = utBotSeries(H, L, C, 4, 10); // TEAL   (Key=4, ATR=10)
-  const gold   = utBotSeries(H, L, C, 3, 300); // GOLD   (Key=3, ATR=300)
-  const silver = utBotSeries(H, L, C, 1, 300); // SILVER (Key=1, ATR=300)
+  const green      = utBotSeries(H, L, C, 2, 10);   // GREEN      (Key=2, ATR=10)
+  const blue       = utBotSeries(H, L, C, 3, 10);   // BLUE       (Key=3, ATR=10)
+  const cyan       = utBotSeries(H, L, C, 2, 300);  // CYAN       (Key=2, ATR=300)
+  const purple     = utBotSeries(H, L, C, 1, 10);   // PURPLE     (Key=1, ATR=10)
+  const teal       = utBotSeries(H, L, C, 4, 10);   // TEAL       (Key=4, ATR=10)
+  const infraGreen = utBotSeries(H, L, C, 0.5, 10); // INFRAGREEN (Key=0.5, ATR=10)
 
   const ema10 = emaSeries(C, 10); // 10EMA on Heikin-Ashi close
   const ema30 = emaSeries(C, 30); // 30EMA on Heikin-Ashi close
 
-  // CYAN BUY cutoff: only allowed before 10:30 AM (candle time)
-  const cyanBuyTimeOK = candles.map(cd => {
+  // Candle time in minutes (HH:MM) — used by CYAN cutoff, day-boundary and TEAL-after-10AM checks
+  const candleMinutes = candles.map(cd => {
     const m = /(\d{1,2}):(\d{2})/.exec(String(cd && cd.time));
-    if (!m) return true;
-    return Number(m[1]) * 60 + Number(m[2]) < 10 * 60 + 30;
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
   });
+
+  // CYAN BUY cutoff: only allowed before 10:30 AM (candle time)
+  const cyanBuyTimeOK = candleMinutes.map(mins => (mins == null ? true : mins < 10 * 60 + 30));
 
   let lastSignal = "WAIT", lastReason = "No signal";
   let trending = false;
@@ -157,31 +157,31 @@ function utGptStrategy3(candles) {
   // Pending PURPLE sell state
   let pendingPurpleSell = { active: false, high: 0, low: 0 };
 
-  // BOOMBUY gate: only armed after a fresh BLUE bullish flip, disarmed after firing
-  let boomBuyArmed = false;
-
-  // Proximity tracking: candle index of latest BLUE/TEAL bullish flip
-  let lastBlueFlipBuyIdx = -Infinity;
+  // Candle index of latest TEAL bullish flip (for the BLUE BUY block)
   let lastTealFlipBuyIdx = -Infinity;
 
-  // Consecutive candles with 10EMA above 30EMA (for SILVER BOOMBUY maturity check)
-  let emaUpStreak = 0;
+  // Candle index where the current trading day starts (detected by time going backwards)
+  let dayStartIdx = 0;
+
+  // Track TEAL 1-BUY fallback rule: max 1 TEAL BUY per trading day (after 10:00 AM)
+  let tealBuyFiredToday = false;
+  // Track whether any BUY signal fired in current cycle (since last SELL or day start)
+  let hadBuySinceLastExit = false;
 
   for (let i = 1; i < N; i++) {
-    const blueBull  = blue.pos[i] === 1;
-    const greenBull = green.pos[i] === 1;
-    const cyanBull   = cyan.pos[i] === 1;
-    const purpleBull = purple.pos[i] === 1;
-    const tealBull   = teal.pos[i] === 1;
-    const goldBull   = gold.pos[i] === 1;
-    const silverBull = silver.pos[i] === 1;
+    const blueBull       = blue.pos[i] === 1;
+    const greenBull      = green.pos[i] === 1;
+    const cyanBull        = cyan.pos[i] === 1;
+    const purpleBull      = purple.pos[i] === 1;
+    const tealBull        = teal.pos[i] === 1;
+    const infraGreenBull  = infraGreen.pos[i] === 1;
 
-    const blueFlipBuy   = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
-    const greenFlipBuy  = green.pos[i] === 1 && green.pos[i - 1] !== 1;
-    const cyanFlipBuy   = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
-    const tealFlipBuy   = teal.pos[i] === 1 && teal.pos[i - 1] !== 1;
-    const goldFlipBuy   = gold.pos[i] === 1 && gold.pos[i - 1] !== 1;
-    const silverFlipBuy = silver.pos[i] === 1 && silver.pos[i - 1] !== 1;
+    const blueFlipBuy        = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
+    const greenFlipBuy       = green.pos[i] === 1 && green.pos[i - 1] !== 1;
+    const cyanFlipBuy        = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
+    const tealFlipBuy        = teal.pos[i] === 1 && teal.pos[i - 1] !== 1;
+    const infraGreenFlipBuy  = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
+    const infraGreenFlipSell = infraGreen.pos[i] === -1 && infraGreen.pos[i - 1] !== -1;
 
     const blueFlipSell  = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
     const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
@@ -194,18 +194,27 @@ function utGptStrategy3(candles) {
     const e10 = ema10[i];
     const e30 = ema30[i];
     const emaCrossedUp = e10 != null && e30 != null && e10 > e30;
-    emaUpStreak = emaCrossedUp ? emaUpStreak + 1 : 0;
-    const emaCrossMature = emaUpStreak >= 10; // 10EMA above 30EMA for 10+ candles
     const haLowVsEma30 = e30 != null ? L[i] >= e30 : false; // strict: HA low must be at or above 30EMA
-    const haLowAboveEma30 = e30 != null ? L[i] > e30 : false; // stricter: HA low above 30EMA (not touching)
-    const touchesEma30  = e30 != null ? C[i] <= e30 : false; // candle HA close touches or crosses below 30EMA
+    const touchesEma30  = e30 != null ? L[i] <= e30 : false; // candle touches or crosses below 30EMA
 
-    // TRENDING: true when all 7 UT Bots are bullish on this candle
-    trending = blueBull && greenBull && cyanBull && purpleBull && tealBull && goldBull && silverBull;
+    // TRENDING: true when all 5 UT Bots are bullish on this candle
+    trending = blueBull && greenBull && cyanBull && purpleBull && tealBull;
 
-    // Arm BOOMBUY on fresh BLUE bullish flip, and record flip indices for proximity
-    if (blueFlipBuy) { boomBuyArmed = true; lastBlueFlipBuyIdx = i; }
+    // New trading day starts when candle time goes backwards (e.g. 15:30 → 09:15)
+    if (candleMinutes[i] != null && candleMinutes[i - 1] != null && candleMinutes[i] < candleMinutes[i - 1]) {
+      dayStartIdx = i;
+      tealBuyFiredToday = false;
+      hadBuySinceLastExit = false;
+    }
     if (tealFlipBuy) lastTealFlipBuyIdx = i;
+
+    // TEAL blocks BLUE BUY only if its last bullish flip happened TODAY at/after 10:00.
+    // TEAL carried over from yesterday, or flipped before 10:00, does NOT block.
+    // Unparseable flip time is treated as counting (blocks).
+    const tealFlipMin = lastTealFlipBuyIdx >= 0 ? candleMinutes[lastTealFlipBuyIdx] : null;
+    const tealBlocksBlue = teal.pos[i - 1] === 1
+      && lastTealFlipBuyIdx >= dayStartIdx
+      && (tealFlipMin == null || tealFlipMin >= 10 * 60);
 
     let sig = "WAIT", reason = "No signal";
 
@@ -218,14 +227,16 @@ function utGptStrategy3(candles) {
       if (blueFlipSell) flips.push("BLUE");
       reason = flips.join(" & ") + " flip bearish";
       pendingPurpleSell = { active: false, high: 0, low: 0 }; // clear pending
+      hadBuySinceLastExit = false;
     }
     // ── SELL: PURPLE flips bearish (conditional on 30EMA) ──
     // Note: PURPLE bullish flip cancels pending BEFORE this block (checked below)
     else if (purpleFlipSell && !purpleFlipBuy) {
       if (touchesEma30) {
         sig = "SELL";
-        reason = "PURPLE flip bearish, candle HA close touches 30EMA";
+        reason = "PURPLE flip bearish, candle touches 30EMA";
         pendingPurpleSell = { active: false, high: 0, low: 0 };
+        hadBuySinceLastExit = false;
       } else {
         // Not touching 30EMA → store pending, wait for confirmation
         pendingPurpleSell = { active: true, high: H[i], low: L[i] };
@@ -236,34 +247,21 @@ function utGptStrategy3(candles) {
     else if (pendingPurpleSell.active && !purpleFlipBuy) {
       if (touchesEma30) {
         sig = "SELL";
-        reason = "Pending PURPLE sell confirmed: candle HA close touches 30EMA";
+        reason = "Pending PURPLE sell confirmed: candle touches 30EMA";
         pendingPurpleSell = { active: false, high: 0, low: 0 };
+        hadBuySinceLastExit = false;
+      } else if (H[i] < pendingPurpleSell.high && L[i] < pendingPurpleSell.low) {
+        sig = "SELL";
+        reason = "Pending PURPLE sell confirmed: lower high & lower low than PURPLE sell candle";
+        pendingPurpleSell = { active: false, high: 0, low: 0 };
+        hadBuySinceLastExit = false;
       }
     }
 
-    // ── BOOMBUY: BLUE & TEAL already bullish, GOLD flips bullish ──
-    //           + boomBuyArmed (requires a fresh BLUE bullish flip since last BOOMBUY)
-    //           + within 4 candles of the latest BLUE or TEAL bullish flip (proximity)
-    const goldInProximity = (i - lastBlueFlipBuyIdx <= 4) || (i - lastTealFlipBuyIdx <= 4);
-    if (sig === "WAIT" && blueBull && tealBull && goldFlipBuy && boomBuyArmed && goldInProximity) {
-      sig = "BOOMBUY";
-      reason = "GOLD flip bullish (K3/ATR300) while BLUE & TEAL bullish";
-      boomBuyArmed = false;
-    }
-    // ── BOOMBUY (SILVER): GREEN & BLUE & CYAN bullish, SILVER flips bullish ──
-    //           + 10EMA above 30EMA for at least 10 candles (mature cross)
-    //           + SILVER flip candle HA low above 30EMA (not touching/crossing)
-    else if (sig === "WAIT" && greenBull && blueBull && cyanBull && silverFlipBuy && emaCrossMature && haLowAboveEma30) {
-      sig = "BOOMBUY";
-      reason = "SILVER flip bullish (K1/ATR300) while GREEN & BLUE & CYAN bullish, 10EMA>30EMA for 10+ candles, HA low above 30EMA";
-    }
-    // ── BUY: TEAL flips bullish ──
-    else if (sig === "WAIT" && tealFlipBuy) {
-      sig = "BUY";
-      reason = "TEAL flip bullish (K4/ATR10)";
-    }
     // ── BUY: BLUE flips bullish ──
-    else if (sig === "WAIT" && blueFlipBuy) {
+    // Blocked if TEAL was already bullish via a flip TODAY at/after 10:00.
+    // Same-candle TEAL flip, or TEAL flipped yesterday/before 10:00, does NOT block.
+    if (sig === "WAIT" && blueFlipBuy && !tealBlocksBlue) {
       sig = "BUY";
       reason = "BLUE flip bullish (K3/ATR10)";
     }
@@ -277,6 +275,12 @@ function utGptStrategy3(candles) {
       sig = "BUY";
       reason = "CYAN flip bullish (K2/ATR300) while BLUE & GREEN bullish";
     }
+    // ── BUY: TEAL flips bullish after 10:00 AM (fallback: max 1 per day, if no BUY yet in cycle) ──
+    else if (sig === "WAIT" && tealFlipBuy && candleMinutes[i] != null && candleMinutes[i] >= 10 * 60 && !tealBuyFiredToday && !hadBuySinceLastExit) {
+      sig = "BUY";
+      reason = "TEAL flip bullish (K4/ATR10) after 10:00 AM";
+      tealBuyFiredToday = true;
+    }
     // ── REENTER: BLUE & GREEN & CYAN bullish, PURPLE flips bullish ──
     //           + 10EMA above 30EMA (upward cross already occurred)
     //           + PURPLE flip candle HA low not below 30EMA (strict)
@@ -284,9 +288,22 @@ function utGptStrategy3(candles) {
       sig = "REENTER";
       reason = "PURPLE re-entry flip bullish (K1/ATR10) while BLUE & GREEN & CYAN bullish, 10EMA>30EMA, HA low above 30EMA";
     }
+    // ── AUTO-REENTRY: INFRAGREEN (Key=0.5, ATR=10) while GREEN & BLUE & PURPLE bullish ──
+    else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenFlipBuy) {
+      sig = "REENTRY_ON";
+      reason = "INFRAGREEN flip bullish (K0.5/ATR10) while GREEN & BLUE & PURPLE bullish";
+    }
+    else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenFlipSell) {
+      sig = "REENTRY_OFF";
+      reason = "INFRAGREEN flip bearish (K0.5/ATR10) while GREEN & BLUE & PURPLE bullish";
+    }
 
-    // Clear pending PURPLE sell if any BUY/BOOMBUY/REENTER signal fired, or PURPLE flipped bullish
-    if (sig === "BUY" || sig === "BOOMBUY" || sig === "REENTER" || purpleFlipBuy) {
+    if (sig === "BUY" || sig === "REENTER") {
+      hadBuySinceLastExit = true;
+    }
+
+    // Clear pending PURPLE sell if any BUY/REENTER signal fired, or PURPLE flipped bullish
+    if (sig === "BUY" || sig === "REENTER" || purpleFlipBuy) {
       pendingPurpleSell = { active: false, high: 0, low: 0 };
     }
 
@@ -303,15 +320,13 @@ function utGptStrategy3(candles) {
     cyanPos: cyan.pos[N - 1],
     purplePos: purple.pos[N - 1],
     tealPos: teal.pos[N - 1],
-    goldPos: gold.pos[N - 1],
-    silverPos: silver.pos[N - 1],
+    infraGreenPos: infraGreen.pos[N - 1],
     greenTrail: green.trail[N - 1],
     blueTrail: blue.trail[N - 1],
     cyanTrail: cyan.trail[N - 1],
     purpleTrail: purple.trail[N - 1],
     tealTrail: teal.trail[N - 1],
-    goldTrail: gold.trail[N - 1],
-    silverTrail: silver.trail[N - 1],
+    infraGreenTrail: infraGreen.trail[N - 1],
     ema10: ema10[N - 1],
     ema30: ema30[N - 1],
     close: C[N - 1]
