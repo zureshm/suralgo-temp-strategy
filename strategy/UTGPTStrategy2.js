@@ -29,9 +29,10 @@
 //               (a) candle HA low ≤ 30EMA → confirm SELL.
 //               (b) candle HA high < pending HIGH AND HA low < pending LOW
 //                   (lower high + lower low) → confirm SELL.
-// REENTER:  INFRAGREEN is bullish while GREEN, BLUE, and PURPLE are bullish,
-//           AND auto re-entry gates pass: close > highest HA close of previous
-//           30 candles + 2 pts, EMA10 > EMA30, EMA10 rising vs 5 candles ago.
+// REENTER:  INFRAGREEN is bullish (window = while it stays bullish) while
+//           GREEN, BLUE, and PURPLE are bullish, AND close > highest HA close
+//           of previous 30 candles + 5 pts (excl. current candle), AND
+//           10EMA > 30EMA (strict), AND 10EMA rising vs 5 candles ago.
 //
 // =============================================================================
 
@@ -139,11 +140,6 @@ function utGptStrategy2(candles) {
   const ema10 = emaSeries(C, 10); // 10EMA on Heikin-Ashi close
   const ema30 = emaSeries(C, 30); // 30EMA on Heikin-Ashi close
 
-  // ── Auto re-entry gate config ──
-  const REENTER_PEAK_CANDLES = 30;      // previous N HA closes to beat
-  const REENTER_POINTS = 2;             // required margin above that peak
-  const REENTER_EMA_RISE_LOOKBACK = 5;  // EMA10 must be higher than N candles ago
-
   // Candle time in minutes (HH:MM) — used by CYAN cutoff, day-boundary and TEAL-after-10AM checks
   const candleMinutes = candles.map(cd => {
     const m = /(\d{1,2}):(\d{2})/.exec(String(cd && cd.time));
@@ -152,6 +148,11 @@ function utGptStrategy2(candles) {
 
   // CYAN BUY cutoff: only allowed before 10:30 AM (candle time)
   const cyanBuyTimeOK = candleMinutes.map(mins => (mins == null ? true : mins < 10 * 60 + 30));
+
+  // Auto re-entry gate config
+  const REENTER_PEAK_CANDLES = 30; // highest HA close over previous N candles (excl. current)
+  const REENTER_POINTS = 5;        // close must clear the peak by this many points
+  const REENTER_EMA_LOOKBACK = 5;  // EMA10 must exceed its value N candles ago
 
   let lastSignal = "WAIT", lastReason = "No signal";
   let trending = false;
@@ -194,15 +195,13 @@ function utGptStrategy2(candles) {
     const e10 = ema10[i];
     const e30 = ema30[i];
     const emaCrossedUp = e10 != null && e30 != null && e10 > e30;
-    const ema10Rising = ema10[i] != null && ema10[i - REENTER_EMA_RISE_LOOKBACK] != null
-      && ema10[i] > ema10[i - REENTER_EMA_RISE_LOOKBACK];
-
-    // Auto re-entry peak gate: close must beat highest HA close of previous N candles + points
-    const peakStart = i - REENTER_PEAK_CANDLES;
-    const reEntryPeak = peakStart >= 0 ? Math.max(...C.slice(peakStart, i)) : null;
-    const priceBreaksPeak = reEntryPeak != null && C[i] > reEntryPeak + REENTER_POINTS;
     const haLowVsEma30 = e30 != null ? L[i] >= e30 : false; // strict: HA low must be at or above 30EMA
     const touchesEma30  = e30 != null ? L[i] <= e30 : false; // candle touches or crosses below 30EMA
+
+    // Auto re-entry gates: peak break (excl. current candle) + EMA10 rising
+    const reEntryPeak = i > REENTER_PEAK_CANDLES ? Math.max(...C.slice(i - REENTER_PEAK_CANDLES, i)) : null;
+    const priceBreaksPeak = reEntryPeak != null && C[i] > reEntryPeak + REENTER_POINTS;
+    const ema10Rising = e10 != null && ema10[i - REENTER_EMA_LOOKBACK] != null && e10 > ema10[i - REENTER_EMA_LOOKBACK];
 
     // TRENDING: true when all 5 UT Bots are bullish on this candle
     trending = blueBull && greenBull && cyanBull && purpleBull && tealBull;
@@ -288,19 +287,19 @@ function utGptStrategy2(candles) {
       reason = "TEAL flip bullish (K4/ATR10) after 10:00 AM";
       tealBuyFiredToday = true;
     }
-    // ── REENTER: INFRAGREEN bullish + auto re-entry gates while GREEN & BLUE & PURPLE bullish ──
+    // ── REENTER: INFRAGREEN bullish + peak break + EMA10>30 & rising ──
     else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenBull
       && priceBreaksPeak && emaCrossedUp && ema10Rising) {
       sig = "REENTER";
       reason = `Auto re-entry: close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}, EMA10>30 & rising, INFRAGREEN bullish`;
     }
 
-    if (sig === "BUY") {
+    if (sig === "BUY" || sig === "REENTER") {
       hadBuySinceLastExit = true;
     }
 
-    // Clear pending PURPLE sell if a BUY signal fired, or PURPLE flipped bullish
-    if (sig === "BUY" || purpleFlipBuy) {
+    // Clear pending PURPLE sell if any BUY/REENTER signal fired, or PURPLE flipped bullish
+    if (sig === "BUY" || sig === "REENTER" || purpleFlipBuy) {
       pendingPurpleSell = { active: false, high: 0, low: 0 };
     }
 

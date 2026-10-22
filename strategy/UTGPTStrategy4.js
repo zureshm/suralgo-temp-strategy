@@ -281,12 +281,12 @@ function utGptStrategy4(candles) {
       reason = "PURPLE re-entry flip bullish (K1/ATR10) while BLUE & GREEN & CYAN bullish, 10EMA>30EMA, HA low above 30EMA";
     }
 
-    if (sig === "BUY") {
+    if (sig === "BUY" || sig === "REENTER") {
       hadBuySinceLastExit = true;
     }
 
-    // Clear pending PURPLE sell if a BUY signal fired, or PURPLE flipped bullish
-    if (sig === "BUY" || purpleFlipBuy) {
+    // Clear pending PURPLE sell if any BUY/REENTER signal fired, or PURPLE flipped bullish
+    if (sig === "BUY" || sig === "REENTER" || purpleFlipBuy) {
       pendingPurpleSell = { active: false, high: 0, low: 0 };
     }
 
