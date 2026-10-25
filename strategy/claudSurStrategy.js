@@ -18,6 +18,8 @@
 //   MACD      = ON   // MACD line above Signal line (crossed upwards); rejected if a
 //                    // downward cross happened within last 10 candles while MACD > 0
 //                    // (tangling = choppy market, lookback counted from signal candle)
+//                    // Enforced only for candles between 10:00 and 15:00 — outside
+//                    // that window BUY/REENTER ignore MACD entirely (WMA still applies)
 //   WMA_CROSS = ON   // WMA30 above WMA60 (crossed upwards)
 //
 // BUY:      BLUE flips bullish (blocked if TEAL flipped bullish TODAY at/after
@@ -27,7 +29,7 @@
 //           OR BLUE & GREEN already bullish and CYAN flips bullish
 //           (only before 10:30 AM, and 10EMA > 30EMA),
 //           OR TEAL flips bullish.
-//           Every BUY branch requires all positive conditions above.
+//           Every BUY branch requires MACD = ON and WMA_CROSS = ON.
 // SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
 //           PURPLE flips bearish → conditional:
 //             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
@@ -245,7 +247,11 @@ function claudSurStrategy(candles) {
         }
       }
     }
-    condA = macdAbove && !macdTangled;
+    // MACD gate enforced only between 10:00 and 15:00 (candle time).
+    // Outside the window MACD is ignored; unparseable time → enforced.
+    const mins = candleMinutes[i];
+    const macdEnforced = mins == null || (mins >= 10 * 60 && mins < 15 * 60);
+    condA = !macdEnforced || (macdAbove && !macdTangled);
     condB = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
     const macdWmaOK = condA && condB;
 

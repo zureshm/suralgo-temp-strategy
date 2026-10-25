@@ -27,7 +27,7 @@
 //           OR BLUE & GREEN already bullish and CYAN flips bullish
 //           (only before 10:30 AM, and 10EMA > 30EMA),
 //           OR TEAL flips bullish.
-//           Every BUY branch requires all positive conditions above.
+//           Every BUY branch requires MACD = ON and WMA_CROSS = ON.
 // SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
 //           PURPLE flips bearish → conditional:
 //             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
