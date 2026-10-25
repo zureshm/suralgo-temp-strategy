@@ -6,7 +6,7 @@ const cors = require("cors");
 const { evaluateEMACross : NothingStrategy } = require("./strategy/evaluateEMACross");
 const { surStrategy } = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
-const { claudSurStrategy : SUMESH_FINAL} = require("./strategy/claudSurStrategy");
+const { claudSurStrategy : HEIKIN_UT_MACD_RE} = require("./strategy/claudSurStrategy");
 const { superUTBotStrategy } = require("./strategy/superUTBotStrategy");
 const { superDoubleUT } = require("./strategy/superDoubleUT");
 const { utGptStrategy : HEIKIN_SUMESH_RE } = require("./strategy/UTGPTStrategy");
@@ -78,7 +78,7 @@ const strategies = {
   NothingStrategy,
   surStrategy,
   chatGptStrategy,
-  SUMESH_FINAL,
+  HEIKIN_UT_MACD_RE,
   superUTBotStrategy,
   superDoubleUT,
   HEIKIN_SUMESH_RE,
@@ -92,7 +92,7 @@ const strategies = {
 };
 
 // Active strategy (default)
-let activeStrategy = "HEIKIN_DINKAN_BUGGY";
+let activeStrategy = "HEIKIN_UT_MACD_RE";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};

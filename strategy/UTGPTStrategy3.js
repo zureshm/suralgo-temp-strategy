@@ -15,7 +15,9 @@
 // Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
 //
 // POSITIVE CONDITIONS — gate every BUY and REENTER (all ON flags must hold):
-//   MACD      = ON   // MACD line above Signal line (crossed upwards)
+//   MACD      = ON   // MACD line above Signal line (crossed upwards); rejected if a
+//                    // downward cross happened within last 10 candles while MACD > 0
+//                    // (tangling = choppy market, lookback counted from signal candle)
 //   WMA_CROSS = ON   // WMA30 above WMA60 (crossed upwards)
 //
 // BUY:      BLUE flips bullish (blocked if TEAL flipped bullish TODAY at/after
@@ -168,6 +170,10 @@ function utGptStrategy3(candles) {
   const wma30 = wmaSeries(C, 30);
   const wma60 = wmaSeries(C, 60);
 
+  // MACD tangle filter: a down-cross within this many candles (counted back from
+  // the signal candle) marks the current MACD>Signal state as a re-cross → reject.
+  const MACD_TANGLE_LOOKBACK = 10;
+
   // Candle time in minutes (HH:MM) — used by CYAN cutoff, day-boundary and TEAL-after-10AM checks
   const candleMinutes = candles.map(cd => {
     const m = /(\d{1,2}):(\d{2})/.exec(String(cd && cd.time));
@@ -184,6 +190,7 @@ function utGptStrategy3(candles) {
 
   let lastSignal = "WAIT", lastReason = "No signal";
   let trending = false;
+  let condA = false, condB = false, macdTangled = false;
 
   // Pending PURPLE sell state
   let pendingPurpleSell = { active: false, high: 0, low: 0 };
@@ -226,9 +233,20 @@ function utGptStrategy3(candles) {
     const priceBreaksPeak = reEntryPeak != null && C[i] > reEntryPeak + REENTER_POINTS;
     const ema10Rising = e10 != null && ema10[i - REENTER_EMA_LOOKBACK] != null && e10 > ema10[i - REENTER_EMA_LOOKBACK];
 
-    // BUY/REENTER gate: Condition A (MACD > Signal) AND Condition B (WMA30 > WMA60)
-    const condA = macdLine[i] != null && macdSignal[i] != null && macdLine[i] > macdSignal[i];
-    const condB = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
+    // BUY/REENTER gate: Condition A (MACD > Signal, no recent tangle) AND Condition B (WMA30 > WMA60)
+    const macdAbove = macdLine[i] != null && macdSignal[i] != null && macdLine[i] > macdSignal[i];
+    macdTangled = false;
+    if (macdAbove && macdLine[i] > 0) {
+      for (let j = Math.max(1, i - MACD_TANGLE_LOOKBACK); j <= i; j++) {
+        if (macdLine[j] != null && macdSignal[j] != null && macdLine[j - 1] != null && macdSignal[j - 1] != null
+          && macdLine[j] < macdSignal[j] && macdLine[j - 1] >= macdSignal[j - 1]) {
+          macdTangled = true;
+          break;
+        }
+      }
+    }
+    condA = macdAbove && !macdTangled;
+    condB = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
     const macdWmaOK = condA && condB;
 
     // TRENDING: true when all 5 UT Bots are bullish on this candle
@@ -346,8 +364,9 @@ function utGptStrategy3(candles) {
     macdSignal: macdSignal[N - 1],
     wma30: wma30[N - 1],
     wma60: wma60[N - 1],
-    condA: macdLine[N - 1] != null && macdSignal[N - 1] != null && macdLine[N - 1] > macdSignal[N - 1],
-    condB: wma30[N - 1] != null && wma60[N - 1] != null && wma30[N - 1] > wma60[N - 1],
+    condA,
+    macdTangled,
+    condB,
     close: C[N - 1]
   };
 }
