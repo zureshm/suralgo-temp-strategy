@@ -107,8 +107,13 @@ app.get("/", (req, res) => {
   res.send("Strategy engine running");
 });
 
-app.get("/evaluate", (req, res) => {
+app.get("/evaluate", async (req, res) => {
   const requestedSymbol = req.query.symbol;
+
+  // Heal wiped FAKE stream history on demand (no-op when healthy)
+  if (requestedSymbol === "FAKE_CE" || requestedSymbol === "FAKE_PE") {
+    await ensureFakeStreams();
+  }
 
   // If no symbol provided, return a simple engine status
   if (!requestedSymbol) {
@@ -300,8 +305,63 @@ app.get("/logs/strategy", (req, res) => {
   res.json({ logs: strategyLogs });
 });
 
+// ── Self-healing FAKE_CE / FAKE_PE history ──
+// FAKE streams are seeded once by build-candle.js; a strategy restart or
+// /reset-engine wipes them and they never come back. The Nifty50 chart's own
+// data already lives on the feed server, so pull it from there and re-seed.
+const FEED_NIFTY50_URL = "http://localhost:2000/nifty50-candles";
+let fakeReseedPromise = null;
+
+async function ensureFakeStreams() {
+  const niftyCount = candleHistoryBySymbol.FAKE_CE?.length ?? 0;
+  const peCount = candleHistoryBySymbol.FAKE_PE?.length ?? 0;
+  if (niftyCount >= 100 && peCount >= 100) return; // both healthy
+  if (!fakeReseedPromise) {
+    fakeReseedPromise = (async () => {
+      const r = await fetch(FEED_NIFTY50_URL);
+      const data = await r.json();
+      const candles = Array.isArray(data?.completedCandles) ? data.completedCandles : [];
+      if (candles.length === 0) return;
+
+      const norm = candles.map((c) => ({
+        time: c.time,
+        open: Number(c.open),
+        high: Number(c.high),
+        low: Number(c.low),
+        close: Number(c.close),
+        volume: Number(c.volume) || 0,
+      }));
+
+      const lastClose = norm[norm.length - 1].close;
+      const anchor = 2 * lastClose;
+      const mirrored = norm.map((c) => ({
+        time: c.time,
+        open: anchor - c.open,
+        high: anchor - c.low,
+        low: anchor - c.high,
+        close: anchor - c.close,
+        volume: c.volume,
+      }));
+
+      if ((candleHistoryBySymbol.FAKE_CE?.length ?? 0) < 100) {
+        candleHistoryBySymbol.FAKE_CE = norm;
+        historyLoadedBySymbol.FAKE_CE = true;
+      }
+      if ((candleHistoryBySymbol.FAKE_PE?.length ?? 0) < 100) {
+        candleHistoryBySymbol.FAKE_PE = mirrored;
+        historyLoadedBySymbol.FAKE_PE = true;
+      }
+      console.log(`[FAKE] Re-seeded FAKE_CE/FAKE_PE with ${norm.length} candles from feed server`);
+    })()
+      .catch((e) => console.error("[FAKE] Re-seed failed:", e.message))
+      .finally(() => { fakeReseedPromise = null; });
+  }
+  await fakeReseedPromise;
+}
+
 // Chart history endpoint - returns last 700 OHLC candles per symbol for charting
-app.get("/chart-history", (req, res) => {
+app.get("/chart-history", async (req, res) => {
+  await ensureFakeStreams();
   const result = {};
   for (const sym of Object.keys(candleHistoryBySymbol)) {
     result[sym] = candleHistoryBySymbol[sym].slice(-700).map(c => ({

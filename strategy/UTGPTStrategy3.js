@@ -9,17 +9,23 @@
 //   - TEAL   (UT Bot 5): Key Value = 4, ATR Period = 10
 //   - INFRAGREEN (UT Bot 6): Key Value = 0.5, ATR Period = 10 (Auto-reentry trigger)
 //   - 10EMA and 30EMA calculated on Heikin-Ashi close.
+//   - MACD (12, 24, 9) on Heikin-Ashi close
+//   - WMA30 / WMA60 on Heikin-Ashi close
 //
 // Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
+//
+// POSITIVE CONDITIONS — gate every BUY and REENTER (all ON flags must hold):
+//   MACD      = ON   // MACD line above Signal line (crossed upwards)
+//   WMA_CROSS = ON   // WMA30 above WMA60 (crossed upwards)
 //
 // BUY:      BLUE flips bullish (blocked if TEAL flipped bullish TODAY at/after
 //           10:00 and is still bullish — TEAL flipped yesterday/before 10:00 or
 //           a same-candle TEAL+BLUE flip still buys),
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish
-//           (only before 10:30 AM),
-//           OR TEAL flips bullish after 10:00 AM (fallback: max 1 per day,
-//           only if no other BUY has fired in current cycle).
+//           (only before 10:30 AM, and 10EMA > 30EMA),
+//           OR TEAL flips bullish.
+//           Every BUY branch requires all positive conditions above.
 // SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
 //           PURPLE flips bearish → conditional:
 //             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
@@ -29,12 +35,10 @@
 //               (a) candle HA low ≤ 30EMA → confirm SELL.
 //               (b) candle HA high < pending HIGH AND HA low < pending LOW
 //                   (lower high + lower low) → confirm SELL.
-// REENTER:  Both GREEN and BLUE and CYAN are bullish, and PURPLE becomes bullish,
-//           AND 10EMA is already above 30EMA (upward cross has occurred),
-//           AND the PURPLE flip candle's HA low is not below 30EMA (strict).
-// AUTO-REENTRY:
-//   - REENTRY_ON:  INFRAGREEN flips bullish while GREEN, BLUE, and PURPLE are bullish.
-//   - REENTRY_OFF: INFRAGREEN flips bearish while GREEN, BLUE, and PURPLE are bullish.
+// REENTER:  INFRAGREEN is bullish (window = while it stays bullish) while
+//           GREEN, BLUE, and PURPLE are bullish, AND close > highest HA close
+//           of previous 30 candles + 5 pts (excl. current candle), AND
+//           10EMA > 30EMA (strict), AND 10EMA rising vs 5 candles ago.
 //
 // =============================================================================
 
@@ -70,6 +74,18 @@ function emaSeries(src, period) {
   for (let i = 0; i < period; i++) s += src[i];
   out[period - 1] = s / period;
   for (let i = period; i < src.length; i++) out[i] = src[i] * k + out[i - 1] * (1 - k);
+  return out;
+}
+
+// ── WMA (Weighted Moving Average) ────────────────────────────────────────────
+function wmaSeries(src, period) {
+  const out = new Array(src.length).fill(null);
+  const denom = (period * (period + 1)) / 2;
+  for (let i = period - 1; i < src.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < period; j++) sum += src[i - j] * (period - j);
+    out[i] = sum / denom;
+  }
   return out;
 }
 
@@ -142,6 +158,16 @@ function utGptStrategy3(candles) {
   const ema10 = emaSeries(C, 10); // 10EMA on Heikin-Ashi close
   const ema30 = emaSeries(C, 30); // 30EMA on Heikin-Ashi close
 
+  // Positive Condition A: MACD(12,24,9) line above Signal line
+  const ema12 = emaSeries(C, 12);
+  const ema24 = emaSeries(C, 24);
+  const macdLine = C.map((_, i) => (ema12[i] != null && ema24[i] != null) ? ema12[i] - ema24[i] : null);
+  const macdSignal = emaSeries(macdLine.map(v => v == null ? 0 : v), 9);
+
+  // Positive Condition B: WMA30 above WMA60
+  const wma30 = wmaSeries(C, 30);
+  const wma60 = wmaSeries(C, 60);
+
   // Candle time in minutes (HH:MM) — used by CYAN cutoff, day-boundary and TEAL-after-10AM checks
   const candleMinutes = candles.map(cd => {
     const m = /(\d{1,2}):(\d{2})/.exec(String(cd && cd.time));
@@ -150,6 +176,11 @@ function utGptStrategy3(candles) {
 
   // CYAN BUY cutoff: only allowed before 10:30 AM (candle time)
   const cyanBuyTimeOK = candleMinutes.map(mins => (mins == null ? true : mins < 10 * 60 + 30));
+
+  // Auto re-entry gate config
+  const REENTER_PEAK_CANDLES = 30; // highest HA close over previous N candles (excl. current)
+  const REENTER_POINTS = 5;        // close must clear the peak by this many points
+  const REENTER_EMA_LOOKBACK = 5;  // EMA10 must exceed its value N candles ago
 
   let lastSignal = "WAIT", lastReason = "No signal";
   let trending = false;
@@ -163,11 +194,6 @@ function utGptStrategy3(candles) {
   // Candle index where the current trading day starts (detected by time going backwards)
   let dayStartIdx = 0;
 
-  // Track TEAL 1-BUY fallback rule: max 1 TEAL BUY per trading day (after 10:00 AM)
-  let tealBuyFiredToday = false;
-  // Track whether any BUY signal fired in current cycle (since last SELL or day start)
-  let hadBuySinceLastExit = false;
-
   for (let i = 1; i < N; i++) {
     const blueBull       = blue.pos[i] === 1;
     const greenBull      = green.pos[i] === 1;
@@ -180,8 +206,6 @@ function utGptStrategy3(candles) {
     const greenFlipBuy       = green.pos[i] === 1 && green.pos[i - 1] !== 1;
     const cyanFlipBuy        = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
     const tealFlipBuy        = teal.pos[i] === 1 && teal.pos[i - 1] !== 1;
-    const infraGreenFlipBuy  = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
-    const infraGreenFlipSell = infraGreen.pos[i] === -1 && infraGreen.pos[i - 1] !== -1;
 
     const blueFlipSell  = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
     const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
@@ -197,14 +221,22 @@ function utGptStrategy3(candles) {
     const haLowVsEma30 = e30 != null ? L[i] >= e30 : false; // strict: HA low must be at or above 30EMA
     const touchesEma30  = e30 != null ? L[i] <= e30 : false; // candle touches or crosses below 30EMA
 
+    // Auto re-entry gates: peak break (excl. current candle) + EMA10 rising
+    const reEntryPeak = i > REENTER_PEAK_CANDLES ? Math.max(...C.slice(i - REENTER_PEAK_CANDLES, i)) : null;
+    const priceBreaksPeak = reEntryPeak != null && C[i] > reEntryPeak + REENTER_POINTS;
+    const ema10Rising = e10 != null && ema10[i - REENTER_EMA_LOOKBACK] != null && e10 > ema10[i - REENTER_EMA_LOOKBACK];
+
+    // BUY/REENTER gate: Condition A (MACD > Signal) AND Condition B (WMA30 > WMA60)
+    const condA = macdLine[i] != null && macdSignal[i] != null && macdLine[i] > macdSignal[i];
+    const condB = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
+    const macdWmaOK = condA && condB;
+
     // TRENDING: true when all 5 UT Bots are bullish on this candle
     trending = blueBull && greenBull && cyanBull && purpleBull && tealBull;
 
     // New trading day starts when candle time goes backwards (e.g. 15:30 → 09:15)
     if (candleMinutes[i] != null && candleMinutes[i - 1] != null && candleMinutes[i] < candleMinutes[i - 1]) {
       dayStartIdx = i;
-      tealBuyFiredToday = false;
-      hadBuySinceLastExit = false;
     }
     if (tealFlipBuy) lastTealFlipBuyIdx = i;
 
@@ -227,7 +259,6 @@ function utGptStrategy3(candles) {
       if (blueFlipSell) flips.push("BLUE");
       reason = flips.join(" & ") + " flip bearish";
       pendingPurpleSell = { active: false, high: 0, low: 0 }; // clear pending
-      hadBuySinceLastExit = false;
     }
     // ── SELL: PURPLE flips bearish (conditional on 30EMA) ──
     // Note: PURPLE bullish flip cancels pending BEFORE this block (checked below)
@@ -236,7 +267,6 @@ function utGptStrategy3(candles) {
         sig = "SELL";
         reason = "PURPLE flip bearish, candle touches 30EMA";
         pendingPurpleSell = { active: false, high: 0, low: 0 };
-        hadBuySinceLastExit = false;
       } else {
         // Not touching 30EMA → store pending, wait for confirmation
         pendingPurpleSell = { active: true, high: H[i], low: L[i] };
@@ -249,57 +279,40 @@ function utGptStrategy3(candles) {
         sig = "SELL";
         reason = "Pending PURPLE sell confirmed: candle touches 30EMA";
         pendingPurpleSell = { active: false, high: 0, low: 0 };
-        hadBuySinceLastExit = false;
       } else if (H[i] < pendingPurpleSell.high && L[i] < pendingPurpleSell.low) {
         sig = "SELL";
         reason = "Pending PURPLE sell confirmed: lower high & lower low than PURPLE sell candle";
         pendingPurpleSell = { active: false, high: 0, low: 0 };
-        hadBuySinceLastExit = false;
       }
     }
 
     // ── BUY: BLUE flips bullish ──
     // Blocked if TEAL was already bullish via a flip TODAY at/after 10:00.
     // Same-candle TEAL flip, or TEAL flipped yesterday/before 10:00, does NOT block.
-    if (sig === "WAIT" && blueFlipBuy && !tealBlocksBlue) {
+    if (sig === "WAIT" && blueFlipBuy && !tealBlocksBlue && macdWmaOK) {
       sig = "BUY";
-      reason = "BLUE flip bullish (K3/ATR10)";
+      reason = "BLUE flip bullish (K3/ATR10) [MACD+WMA ok]";
     }
     // ── BUY: BLUE already bullish, GREEN flips bullish ──
-    else if (sig === "WAIT" && blueBull && greenFlipBuy) {
+    else if (sig === "WAIT" && blueBull && greenFlipBuy && macdWmaOK) {
       sig = "BUY";
-      reason = "GREEN flip bullish (K2/ATR10) while BLUE bullish";
+      reason = "GREEN flip bullish (K2/ATR10) while BLUE bullish [MACD+WMA ok]";
     }
-    // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish (only before 10:30 AM) ──
-    else if (sig === "WAIT" && blueBull && greenBull && cyanFlipBuy && cyanBuyTimeOK[i]) {
+    // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish (only before 10:30 AM, 10EMA>30EMA) ──
+    else if (sig === "WAIT" && blueBull && greenBull && cyanFlipBuy && cyanBuyTimeOK[i] && emaCrossedUp && macdWmaOK) {
       sig = "BUY";
-      reason = "CYAN flip bullish (K2/ATR300) while BLUE & GREEN bullish";
+      reason = "CYAN flip bullish (K2/ATR300) while BLUE & GREEN bullish, 10EMA>30EMA [MACD+WMA ok]";
     }
-    // ── BUY: TEAL flips bullish after 10:00 AM (fallback: max 1 per day, if no BUY yet in cycle) ──
-    else if (sig === "WAIT" && tealFlipBuy && candleMinutes[i] != null && candleMinutes[i] >= 10 * 60 && !tealBuyFiredToday && !hadBuySinceLastExit) {
+    // ── BUY: TEAL flips bullish ──
+    else if (sig === "WAIT" && tealFlipBuy && macdWmaOK) {
       sig = "BUY";
-      reason = "TEAL flip bullish (K4/ATR10) after 10:00 AM";
-      tealBuyFiredToday = true;
+      reason = "TEAL flip bullish (K4/ATR10) [MACD+WMA ok]";
     }
-    // ── REENTER: BLUE & GREEN & CYAN bullish, PURPLE flips bullish ──
-    //           + 10EMA above 30EMA (upward cross already occurred)
-    //           + PURPLE flip candle HA low not below 30EMA (strict)
-    else if (sig === "WAIT" && blueBull && greenBull && cyanBull && purpleFlipBuy && emaCrossedUp && haLowVsEma30) {
+    // ── REENTER: INFRAGREEN bullish + peak break + EMA10>30 & rising ──
+    else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenBull
+      && priceBreaksPeak && emaCrossedUp && ema10Rising && macdWmaOK) {
       sig = "REENTER";
-      reason = "PURPLE re-entry flip bullish (K1/ATR10) while BLUE & GREEN & CYAN bullish, 10EMA>30EMA, HA low above 30EMA";
-    }
-    // ── AUTO-REENTRY: INFRAGREEN (Key=0.5, ATR=10) while GREEN & BLUE & PURPLE bullish ──
-    else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenFlipBuy) {
-      sig = "REENTRY_ON";
-      reason = "INFRAGREEN flip bullish (K0.5/ATR10) while GREEN & BLUE & PURPLE bullish";
-    }
-    else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenFlipSell) {
-      sig = "REENTRY_OFF";
-      reason = "INFRAGREEN flip bearish (K0.5/ATR10) while GREEN & BLUE & PURPLE bullish";
-    }
-
-    if (sig === "BUY" || sig === "REENTER") {
-      hadBuySinceLastExit = true;
+      reason = `Auto re-entry: close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}, EMA10>30 & rising, INFRAGREEN bullish`;
     }
 
     // Clear pending PURPLE sell if any BUY/REENTER signal fired, or PURPLE flipped bullish
@@ -329,6 +342,12 @@ function utGptStrategy3(candles) {
     infraGreenTrail: infraGreen.trail[N - 1],
     ema10: ema10[N - 1],
     ema30: ema30[N - 1],
+    macdLine: macdLine[N - 1],
+    macdSignal: macdSignal[N - 1],
+    wma30: wma30[N - 1],
+    wma60: wma60[N - 1],
+    condA: macdLine[N - 1] != null && macdSignal[N - 1] != null && macdLine[N - 1] > macdSignal[N - 1],
+    condB: wma30[N - 1] != null && wma60[N - 1] != null && wma30[N - 1] > wma60[N - 1],
     close: C[N - 1]
   };
 }
