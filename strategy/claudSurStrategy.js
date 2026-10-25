@@ -17,17 +17,23 @@
 // POSITIVE CONDITIONS — gate every BUY and REENTER (all ON flags must hold):
 //   MACD      = ON   // MACD line above Signal line (crossed upwards); rejected if a
 //                    // downward cross happened within last 10 candles while MACD > 0
+//                    // AND MACD line dipped below MACD_TANGLE_FLOOR (8) at the cross
 //                    // (tangling = choppy market, lookback counted from signal candle)
-//                    // Enforced only for candles between 10:00 and 15:00 — outside
-//                    // that window BUY/REENTER ignore MACD entirely (WMA still applies)
+//                    // Enforced only between 10:00 and 15:00
 //   WMA_CROSS = ON   // WMA30 above WMA60 (crossed upwards)
+//                    // Enforced only between 09:40 and 15:00
+//   TIME WINDOWS:
+//     Before 09:40 → either MACD = ON or WMA_CROSS = ON (at least one)
+//     09:40–10:00  → WMA_CROSS enforced, MACD auto-pass
+//     10:00–15:00  → both enforced
+//     After 15:00  → both auto-pass
 //
 // BUY:      BLUE flips bullish (blocked if TEAL flipped bullish TODAY at/after
 //           10:00 and is still bullish — TEAL flipped yesterday/before 10:00 or
 //           a same-candle TEAL+BLUE flip still buys),
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish
-//           (only before 10:30 AM, and 10EMA > 30EMA),
+//           (only before 9:40 AM, and 10EMA > 30EMA),
 //           OR TEAL flips bullish.
 //           Every BUY branch requires MACD = ON and WMA_CROSS = ON.
 // SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
@@ -39,10 +45,13 @@
 //               (a) candle HA low ≤ 30EMA → confirm SELL.
 //               (b) candle HA high < pending HIGH AND HA low < pending LOW
 //                   (lower high + lower low) → confirm SELL.
-// REENTER:  INFRAGREEN is bullish (window = while it stays bullish) while
-//           GREEN, BLUE, and PURPLE are bullish, AND close > highest HA close
+// REENTER:  INFRAGREEN is the last to join — its most recent bullish flip
+//           happened while GREEN and BLUE were already bullish (window = while
+//           it stays bullish), AND close > highest HA close
 //           of previous 30 candles + 5 pts (excl. current candle), AND
 //           10EMA > 30EMA (strict), AND 10EMA rising vs 5 candles ago.
+//           If a BUY trigger was blocked by the MACD/WMA gate within the last
+//           FAILED_BUY_MEMORY (20) candles, this fires as BUY instead of REENTER.
 //
 // =============================================================================
 
@@ -175,6 +184,7 @@ function claudSurStrategy(candles) {
   // MACD tangle filter: a down-cross within this many candles (counted back from
   // the signal candle) marks the current MACD>Signal state as a re-cross → reject.
   const MACD_TANGLE_LOOKBACK = 10;
+  const MACD_TANGLE_FLOOR = 8; // tangle only counts if MACD dipped below this value
 
   // Candle time in minutes (HH:MM) — used by CYAN cutoff, day-boundary and TEAL-after-10AM checks
   const candleMinutes = candles.map(cd => {
@@ -182,13 +192,17 @@ function claudSurStrategy(candles) {
     return m ? Number(m[1]) * 60 + Number(m[2]) : null;
   });
 
-  // CYAN BUY cutoff: only allowed before 10:30 AM (candle time)
-  const cyanBuyTimeOK = candleMinutes.map(mins => (mins == null ? true : mins < 10 * 60 + 30));
+  // CYAN BUY cutoff: only allowed before 9:40 AM (candle time)
+  const cyanBuyTimeOK = candleMinutes.map(mins => (mins == null ? true : mins < 9 * 60 + 40));
 
   // Auto re-entry gate config
   const REENTER_PEAK_CANDLES = 30; // highest HA close over previous N candles (excl. current)
   const REENTER_POINTS = 5;        // close must clear the peak by this many points
   const REENTER_EMA_LOOKBACK = 5;  // EMA10 must exceed its value N candles ago
+
+  // Failed-BUY memory: a BUY trigger blocked by the macdWmaOK gate is remembered
+  // for this many candles; a REENTER firing inside the window becomes a BUY.
+  const FAILED_BUY_MEMORY = 20;
 
   let lastSignal = "WAIT", lastReason = "No signal";
   let trending = false;
@@ -197,8 +211,15 @@ function claudSurStrategy(candles) {
   // Pending PURPLE sell state
   let pendingPurpleSell = { active: false, high: 0, low: 0 };
 
+  // Candle index + branch name of last BUY trigger blocked by the macdWmaOK gate
+  let pendingFailedBuyIdx = -Infinity;
+  let pendingFailedBuyBranch = "";
+
   // Candle index of latest TEAL bullish flip (for the BLUE BUY block)
   let lastTealFlipBuyIdx = -Infinity;
+
+  // Candle index of latest INFRAGREEN bullish flip (for the REENTER trigger)
+  let lastInfraGreenFlipBuyIdx = -Infinity;
 
   // Candle index where the current trading day starts (detected by time going backwards)
   let dayStartIdx = 0;
@@ -215,6 +236,7 @@ function claudSurStrategy(candles) {
     const greenFlipBuy       = green.pos[i] === 1 && green.pos[i - 1] !== 1;
     const cyanFlipBuy        = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
     const tealFlipBuy        = teal.pos[i] === 1 && teal.pos[i - 1] !== 1;
+    const infraGreenFlipBuy  = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
 
     const blueFlipSell  = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
     const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
@@ -241,19 +263,33 @@ function claudSurStrategy(candles) {
     if (macdAbove && macdLine[i] > 0) {
       for (let j = Math.max(1, i - MACD_TANGLE_LOOKBACK); j <= i; j++) {
         if (macdLine[j] != null && macdSignal[j] != null && macdLine[j - 1] != null && macdSignal[j - 1] != null
-          && macdLine[j] < macdSignal[j] && macdLine[j - 1] >= macdSignal[j - 1]) {
+          && macdLine[j] < macdSignal[j] && macdLine[j - 1] >= macdSignal[j - 1]
+          && macdLine[j] < MACD_TANGLE_FLOOR) {
           macdTangled = true;
           break;
         }
       }
     }
-    // MACD gate enforced only between 10:00 and 15:00 (candle time).
-    // Outside the window MACD is ignored; unparseable time → enforced.
+    // Time-window gating for MACD and WMA:
+    //   Before 9:40  → either raw MACD or raw WMA must be ON (at least one)
+    //   9:40–10:00   → WMA enforced, MACD auto-pass
+    //   10:00–15:00  → both enforced
+    //   After 15:00  → both auto-pass
+    //   Unparseable  → both enforced (conservative)
     const mins = candleMinutes[i];
     const macdEnforced = mins == null || (mins >= 10 * 60 && mins < 15 * 60);
-    condA = !macdEnforced || (macdAbove && !macdTangled);
-    condB = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
-    const macdWmaOK = condA && condB;
+    const wmaEnforced  = mins == null || (mins >= 9 * 60 + 40 && mins < 15 * 60);
+    const earlyWindow  = mins != null && mins < 9 * 60 + 40;
+
+    const rawMacd = macdAbove && !macdTangled;
+    const rawWma  = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
+
+    condA = !macdEnforced || rawMacd;
+    condB = !wmaEnforced  || rawWma;
+
+    const macdWmaOK = earlyWindow
+      ? (rawMacd || rawWma)   // before 9:40: either one suffices
+      : (condA && condB);     // after 9:40: each enforced in its window
 
     // TRENDING: true when all 5 UT Bots are bullish on this candle
     trending = blueBull && greenBull && cyanBull && purpleBull && tealBull;
@@ -263,6 +299,7 @@ function claudSurStrategy(candles) {
       dayStartIdx = i;
     }
     if (tealFlipBuy) lastTealFlipBuyIdx = i;
+    if (infraGreenFlipBuy) lastInfraGreenFlipBuyIdx = i;
 
     // TEAL blocks BLUE BUY only if its last bullish flip happened TODAY at/after 10:00.
     // TEAL carried over from yesterday, or flipped before 10:00, does NOT block.
@@ -310,38 +347,73 @@ function claudSurStrategy(candles) {
       }
     }
 
+    // BUY trigger conditions WITHOUT the macdWmaOK positive-conditions gate,
+    // so a gate-blocked BUY can be remembered (failed-BUY memory below).
+    const blueBuyTrig  = blueFlipBuy && !tealBlocksBlue;
+    const greenBuyTrig = blueBull && greenFlipBuy;
+    const cyanBuyTrig  = blueBull && greenBull && cyanFlipBuy && cyanBuyTimeOK[i] && emaCrossedUp;
+    const tealBuyTrig  = tealFlipBuy;
+
+    // INFRAGREEN triggers REENTER only when it was the LAST to join: its most
+    // recent bullish flip happened while GREEN and BLUE were already bullish,
+    // and it is still bullish now.
+    const idxIG = lastInfraGreenFlipBuyIdx;
+    const infraGreenTrig = infraGreenBull && idxIG >= 0
+      && green.pos[idxIG] === 1 && blue.pos[idxIG] === 1;
+
     // ── BUY: BLUE flips bullish ──
     // Blocked if TEAL was already bullish via a flip TODAY at/after 10:00.
     // Same-candle TEAL flip, or TEAL flipped yesterday/before 10:00, does NOT block.
-    if (sig === "WAIT" && blueFlipBuy && !tealBlocksBlue && macdWmaOK) {
+    if (sig === "WAIT" && blueBuyTrig && macdWmaOK) {
       sig = "BUY";
       reason = "BLUE flip bullish (K3/ATR10) [MACD+WMA ok]";
     }
     // ── BUY: BLUE already bullish, GREEN flips bullish ──
-    else if (sig === "WAIT" && blueBull && greenFlipBuy && macdWmaOK) {
+    else if (sig === "WAIT" && greenBuyTrig && macdWmaOK) {
       sig = "BUY";
       reason = "GREEN flip bullish (K2/ATR10) while BLUE bullish [MACD+WMA ok]";
     }
-    // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish (only before 10:30 AM, 10EMA>30EMA) ──
-    else if (sig === "WAIT" && blueBull && greenBull && cyanFlipBuy && cyanBuyTimeOK[i] && emaCrossedUp && macdWmaOK) {
+    // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish (only before 9:40 AM, 10EMA>30EMA) ──
+    else if (sig === "WAIT" && cyanBuyTrig && macdWmaOK) {
       sig = "BUY";
       reason = "CYAN flip bullish (K2/ATR300) while BLUE & GREEN bullish, 10EMA>30EMA [MACD+WMA ok]";
     }
     // ── BUY: TEAL flips bullish ──
-    else if (sig === "WAIT" && tealFlipBuy && macdWmaOK) {
+    else if (sig === "WAIT" && tealBuyTrig && macdWmaOK) {
       sig = "BUY";
       reason = "TEAL flip bullish (K4/ATR10) [MACD+WMA ok]";
     }
     // ── REENTER: INFRAGREEN bullish + peak break + EMA10>30 & rising ──
-    else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenBull
+    // If a BUY trigger within the last FAILED_BUY_MEMORY candles was blocked by
+    // the macdWmaOK gate, this fires as BUY instead of REENTER.
+    else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenTrig
       && priceBreaksPeak && emaCrossedUp && ema10Rising && macdWmaOK) {
-      sig = "REENTER";
-      reason = `Auto re-entry: close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}, EMA10>30 & rising, INFRAGREEN bullish`;
+      if (i - pendingFailedBuyIdx <= FAILED_BUY_MEMORY) {
+        sig = "BUY";
+        reason = `BUY (re-entry): REENTER conditions met within ${FAILED_BUY_MEMORY} candles of MACD/WMA-blocked ${pendingFailedBuyBranch} | close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}`;
+      } else {
+        sig = "REENTER";
+        reason = `Auto re-entry: close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}, EMA10>30 & rising, INFRAGREEN bullish`;
+      }
+    }
+
+    // ── Failed-BUY memory: record a BUY trigger blocked by the macdWmaOK gate ──
+    if (sig === "WAIT" && !macdWmaOK) {
+      if (blueBuyTrig)       { pendingFailedBuyIdx = i; pendingFailedBuyBranch = "BLUE flip"; }
+      else if (greenBuyTrig) { pendingFailedBuyIdx = i; pendingFailedBuyBranch = "GREEN flip"; }
+      else if (cyanBuyTrig)  { pendingFailedBuyIdx = i; pendingFailedBuyBranch = "CYAN flip"; }
+      else if (tealBuyTrig)  { pendingFailedBuyIdx = i; pendingFailedBuyBranch = "TEAL flip"; }
     }
 
     // Clear pending PURPLE sell if any BUY/REENTER signal fired, or PURPLE flipped bullish
     if (sig === "BUY" || sig === "REENTER" || purpleFlipBuy) {
       pendingPurpleSell = { active: false, high: 0, low: 0 };
+    }
+
+    // Clear failed-BUY memory on any SELL, or once a BUY/REENTER played out
+    if (sig === "SELL" || sig === "BUY" || sig === "REENTER") {
+      pendingFailedBuyIdx = -Infinity;
+      pendingFailedBuyBranch = "";
     }
 
     lastSignal = sig;
