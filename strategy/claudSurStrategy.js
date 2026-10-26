@@ -21,21 +21,20 @@
 //                    // (tangling = choppy market, lookback counted from signal candle)
 //                    // Enforced only between 10:00 and 15:00
 //   WMA_CROSS = ON   // WMA30 above WMA60 (crossed upwards)
-//                    // Enforced only between 09:40 and 15:00
+//                    // Enforced only between 10:00 and 15:00
 //   TIME WINDOWS:
-//     Before 09:40 → either MACD = ON or WMA_CROSS = ON (at least one)
-//     09:40–10:00  → WMA_CROSS enforced, MACD auto-pass
+//     Before 10:00 → either MACD = ON or WMA_CROSS = ON (at least one)
 //     10:00–15:00  → both enforced
 //     After 15:00  → both auto-pass
 //
-// BUY:      BLUE flips bullish (blocked if TEAL flipped bullish TODAY at/after
-//           10:00 and is still bullish — TEAL flipped yesterday/before 10:00 or
-//           a same-candle TEAL+BLUE flip still buys),
+// BUY:      BLUE flips bullish,
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish
 //           (only before 9:40 AM, and 10EMA > 30EMA),
 //           OR TEAL flips bullish.
-//           Every BUY branch requires MACD = ON and WMA_CROSS = ON.
+//           Every BUY branch requires the positive conditions per the TIME
+//           WINDOWS above: before 10:00 either MACD or WMA_CROSS ON is enough,
+//           10:00–15:00 both must be ON, after 15:00 neither is required.
 // SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
 //           PURPLE flips bearish → conditional:
 //             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
@@ -215,14 +214,8 @@ function claudSurStrategy(candles) {
   let pendingFailedBuyIdx = -Infinity;
   let pendingFailedBuyBranch = "";
 
-  // Candle index of latest TEAL bullish flip (for the BLUE BUY block)
-  let lastTealFlipBuyIdx = -Infinity;
-
   // Candle index of latest INFRAGREEN bullish flip (for the REENTER trigger)
   let lastInfraGreenFlipBuyIdx = -Infinity;
-
-  // Candle index where the current trading day starts (detected by time going backwards)
-  let dayStartIdx = 0;
 
   for (let i = 1; i < N; i++) {
     const blueBull       = blue.pos[i] === 1;
@@ -271,15 +264,14 @@ function claudSurStrategy(candles) {
       }
     }
     // Time-window gating for MACD and WMA:
-    //   Before 9:40  → either raw MACD or raw WMA must be ON (at least one)
-    //   9:40–10:00   → WMA enforced, MACD auto-pass
+    //   Before 10:00 → either raw MACD or raw WMA must be ON (at least one)
     //   10:00–15:00  → both enforced
     //   After 15:00  → both auto-pass
     //   Unparseable  → both enforced (conservative)
     const mins = candleMinutes[i];
     const macdEnforced = mins == null || (mins >= 10 * 60 && mins < 15 * 60);
-    const wmaEnforced  = mins == null || (mins >= 9 * 60 + 40 && mins < 15 * 60);
-    const earlyWindow  = mins != null && mins < 9 * 60 + 40;
+    const wmaEnforced  = macdEnforced; // WMA shares the same 10:00–15:00 window
+    const earlyWindow  = mins != null && mins < 10 * 60;
 
     const rawMacd = macdAbove && !macdTangled;
     const rawWma  = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
@@ -288,26 +280,13 @@ function claudSurStrategy(candles) {
     condB = !wmaEnforced  || rawWma;
 
     const macdWmaOK = earlyWindow
-      ? (rawMacd || rawWma)   // before 9:40: either one suffices
-      : (condA && condB);     // after 9:40: each enforced in its window
+      ? (rawMacd || rawWma)   // before 10:00: either one suffices
+      : (condA && condB);     // after 10:00: each enforced in its window
 
     // TRENDING: true when all 5 UT Bots are bullish on this candle
     trending = blueBull && greenBull && cyanBull && purpleBull && tealBull;
 
-    // New trading day starts when candle time goes backwards (e.g. 15:30 → 09:15)
-    if (candleMinutes[i] != null && candleMinutes[i - 1] != null && candleMinutes[i] < candleMinutes[i - 1]) {
-      dayStartIdx = i;
-    }
-    if (tealFlipBuy) lastTealFlipBuyIdx = i;
     if (infraGreenFlipBuy) lastInfraGreenFlipBuyIdx = i;
-
-    // TEAL blocks BLUE BUY only if its last bullish flip happened TODAY at/after 10:00.
-    // TEAL carried over from yesterday, or flipped before 10:00, does NOT block.
-    // Unparseable flip time is treated as counting (blocks).
-    const tealFlipMin = lastTealFlipBuyIdx >= 0 ? candleMinutes[lastTealFlipBuyIdx] : null;
-    const tealBlocksBlue = teal.pos[i - 1] === 1
-      && lastTealFlipBuyIdx >= dayStartIdx
-      && (tealFlipMin == null || tealFlipMin >= 10 * 60);
 
     let sig = "WAIT", reason = "No signal";
 
@@ -349,7 +328,7 @@ function claudSurStrategy(candles) {
 
     // BUY trigger conditions WITHOUT the macdWmaOK positive-conditions gate,
     // so a gate-blocked BUY can be remembered (failed-BUY memory below).
-    const blueBuyTrig  = blueFlipBuy && !tealBlocksBlue;
+    const blueBuyTrig  = blueFlipBuy;
     const greenBuyTrig = blueBull && greenFlipBuy;
     const cyanBuyTrig  = blueBull && greenBull && cyanFlipBuy && cyanBuyTimeOK[i] && emaCrossedUp;
     const tealBuyTrig  = tealFlipBuy;
@@ -362,8 +341,6 @@ function claudSurStrategy(candles) {
       && green.pos[idxIG] === 1 && blue.pos[idxIG] === 1;
 
     // ── BUY: BLUE flips bullish ──
-    // Blocked if TEAL was already bullish via a flip TODAY at/after 10:00.
-    // Same-candle TEAL flip, or TEAL flipped yesterday/before 10:00, does NOT block.
     if (sig === "WAIT" && blueBuyTrig && macdWmaOK) {
       sig = "BUY";
       reason = "BLUE flip bullish (K3/ATR10) [MACD+WMA ok]";
