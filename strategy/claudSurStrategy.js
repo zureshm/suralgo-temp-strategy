@@ -19,13 +19,13 @@
 //                    // downward cross happened within last 10 candles while MACD > 0
 //                    // AND MACD line dipped below MACD_TANGLE_FLOOR (8) at the cross
 //                    // (tangling = choppy market, lookback counted from signal candle)
-//                    // Enforced only between 10:00 and 15:00
+//                    // Enforced only between 10:00 and 14:00
 //   WMA_CROSS = ON   // WMA30 above WMA60 (crossed upwards)
-//                    // Enforced only between 10:00 and 15:00
+//                    // Enforced only between 10:00 and 14:00
 //   TIME WINDOWS:
 //     Before 10:00 → either MACD = ON or WMA_CROSS = ON (at least one)
-//     10:00–15:00  → both enforced
-//     After 15:00  → both auto-pass
+//     10:00–14:00  → both enforced
+//     After 14:00  → both auto-pass
 //
 // BUY:      BLUE flips bullish,
 //           OR BLUE already bullish and GREEN flips bullish,
@@ -34,7 +34,7 @@
 //           OR TEAL flips bullish.
 //           Every BUY branch requires the positive conditions per the TIME
 //           WINDOWS above: before 10:00 either MACD or WMA_CROSS ON is enough,
-//           10:00–15:00 both must be ON, after 15:00 neither is required.
+//           10:00–14:00 both must be ON, after 14:00 neither is required.
 // SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
 //           PURPLE flips bearish → conditional:
 //             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
@@ -265,12 +265,12 @@ function claudSurStrategy(candles) {
     }
     // Time-window gating for MACD and WMA:
     //   Before 10:00 → either raw MACD or raw WMA must be ON (at least one)
-    //   10:00–15:00  → both enforced
-    //   After 15:00  → both auto-pass
+    //   10:00–14:00  → both enforced
+    //   After 14:00  → both auto-pass
     //   Unparseable  → both enforced (conservative)
     const mins = candleMinutes[i];
-    const macdEnforced = mins == null || (mins >= 10 * 60 && mins < 15 * 60);
-    const wmaEnforced  = macdEnforced; // WMA shares the same 10:00–15:00 window
+    const macdEnforced = mins == null || (mins >= 10 * 60 && mins < 14 * 60);
+    const wmaEnforced  = macdEnforced; // WMA shares the same 10:00–14:00 window
     const earlyWindow  = mins != null && mins < 10 * 60;
 
     const rawMacd = macdAbove && !macdTangled;

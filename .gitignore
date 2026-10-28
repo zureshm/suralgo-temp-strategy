@@ -17,3 +17,5 @@ coverage/
 
 .vscode/
 .idea/
+# Test/benchmark scripts (temporary, not for commit)
+*_test.js
