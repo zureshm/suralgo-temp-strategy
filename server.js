@@ -278,17 +278,17 @@ app.post("/evaluate", (req, res) => {
 
   // Sticky signal: don't let WAIT overwrite a previous BUY/SELL/REENTER/REEXIT
   // immediately, so the server-side trade engine has time to poll it via GET.
-  // But expire the sticky signal after 3 candles to prevent stale activation.
+  // But expire the sticky signal after 1 candle to prevent stale re-entry.
   const prev = latestEvaluationBySymbol[symbol];
   if (result.signal !== "WAIT") {
     latestEvaluationBySymbol[symbol] = currentEval;
   } else if (!prev || prev.signal === "WAIT") {
     latestEvaluationBySymbol[symbol] = currentEval;
-  } else if (symbolCandles.length > prev.candleCount + 3) {
-    // Sticky signal expired (more than 3 candles old) — let WAIT through
+  } else if (symbolCandles.length > prev.candleCount + 1) {
+    // Sticky signal expired (more than 1 candle old) — let WAIT through
     latestEvaluationBySymbol[symbol] = currentEval;
   }
-  // else: previous was BUY/SELL/REENTER/REEXIT within 3 candles → keep it
+  // else: previous was BUY/SELL/REENTER/REEXIT within 1 candle → keep it
 
   console.log("New candle received for:", symbol);
   console.log("New candle received:", normalizedCandle);
