@@ -8,17 +8,18 @@
 //   - PURPLE (UT Bot 4): Key Value = 1, ATR Period = 10
 //   - TEAL   (UT Bot 5): Key Value = 4, ATR Period = 10
 //   - INFRAGREEN (UT Bot 6): Key Value = 0.5, ATR Period = 10 (Auto-reentry trigger)
+//   - PALEGREEN (UT Bot 7): Key Value = 1.5, ATR Period = 10
 //   - 10EMA and 30EMA calculated on Heikin-Ashi close.
 //
 // Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
 //
-// BUY:      BLUE flips bullish (blocked if TEAL flipped bullish TODAY at/after
-//           10:00 and is still bullish — TEAL flipped yesterday/before 10:00 or
-//           a same-candle TEAL+BLUE flip still buys),
+// BUY:      BLUE flips bullish,
 //           OR BLUE already bullish and GREEN flips bullish,
 //           OR BLUE & GREEN already bullish and CYAN flips bullish
 //           (only before 10:30 AM, and 10EMA > 30EMA),
-//           OR TEAL flips bullish.
+//           OR TEAL flips bullish,
+//           OR BLUE already bullish and PALEGREEN flips bullish
+//           (10EMA > 30EMA strict, AND 10EMA rising vs 5 candles ago).
 // SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
 //           PURPLE flips bearish → conditional:
 //             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
@@ -135,6 +136,7 @@ function superUTBotStrategy(candles) {
   const purple     = utBotSeries(H, L, C, 1, 10);   // PURPLE     (Key=1, ATR=10)
   const teal       = utBotSeries(H, L, C, 4, 10);   // TEAL       (Key=4, ATR=10)
   const infraGreen = utBotSeries(H, L, C, 0.5, 10); // INFRAGREEN (Key=0.5, ATR=10)
+  const palegreen  = utBotSeries(H, L, C, 1.5, 10); // PALEGREEN (Key=1.5, ATR=10)
 
   const ema10 = emaSeries(C, 10); // 10EMA on Heikin-Ashi close
   const ema30 = emaSeries(C, 30); // 30EMA on Heikin-Ashi close
@@ -159,9 +161,6 @@ function superUTBotStrategy(candles) {
   // Pending PURPLE sell state
   let pendingPurpleSell = { active: false, high: 0, low: 0 };
 
-  // Candle index of latest TEAL bullish flip (for the BLUE BUY block)
-  let lastTealFlipBuyIdx = -Infinity;
-
   // Candle index of latest INFRAGREEN bullish flip (for the REENTER trigger)
   let lastInfraGreenFlipBuyIdx = -Infinity;
 
@@ -175,12 +174,14 @@ function superUTBotStrategy(candles) {
     const purpleBull      = purple.pos[i] === 1;
     const tealBull        = teal.pos[i] === 1;
     const infraGreenBull  = infraGreen.pos[i] === 1;
+    const palegreenBull   = palegreen.pos[i] === 1;
 
     const blueFlipBuy        = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
     const greenFlipBuy       = green.pos[i] === 1 && green.pos[i - 1] !== 1;
     const cyanFlipBuy        = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
     const tealFlipBuy        = teal.pos[i] === 1 && teal.pos[i - 1] !== 1;
     const infraGreenFlipBuy  = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
+    const palegreenFlipBuy   = palegreen.pos[i] === 1 && palegreen.pos[i - 1] !== 1;
 
     const blueFlipSell  = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
     const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
@@ -215,16 +216,7 @@ function superUTBotStrategy(candles) {
     if (candleMinutes[i] != null && candleMinutes[i - 1] != null && candleMinutes[i] < candleMinutes[i - 1]) {
       dayStartIdx = i;
     }
-    if (tealFlipBuy) lastTealFlipBuyIdx = i;
     if (infraGreenFlipBuy) lastInfraGreenFlipBuyIdx = i;
-
-    // TEAL blocks BLUE BUY only if its last bullish flip happened TODAY at/after 10:00.
-    // TEAL carried over from yesterday, or flipped before 10:00, does NOT block.
-    // Unparseable flip time is treated as counting (blocks).
-    const tealFlipMin = lastTealFlipBuyIdx >= 0 ? candleMinutes[lastTealFlipBuyIdx] : null;
-    const tealBlocksBlue = teal.pos[i - 1] === 1
-      && lastTealFlipBuyIdx >= dayStartIdx
-      && (tealFlipMin == null || tealFlipMin >= 10 * 60);
 
     let sig = "WAIT", reason = "No signal";
 
@@ -265,9 +257,7 @@ function superUTBotStrategy(candles) {
     }
 
     // ── BUY: BLUE flips bullish ──
-    // Blocked if TEAL was already bullish via a flip TODAY at/after 10:00.
-    // Same-candle TEAL flip, or TEAL flipped yesterday/before 10:00, does NOT block.
-    if (sig === "WAIT" && blueFlipBuy && !tealBlocksBlue) {
+    if (sig === "WAIT" && blueFlipBuy) {
       sig = "BUY";
       reason = "BLUE flip bullish (K3/ATR10)";
     }
@@ -285,6 +275,11 @@ function superUTBotStrategy(candles) {
     else if (sig === "WAIT" && tealFlipBuy) {
       sig = "BUY";
       reason = "TEAL flip bullish (K4/ATR10)";
+    }
+    // ── BUY: BLUE already bullish, PALEGREEN flips bullish (10EMA>30EMA strict, EMA10 rising) ──
+    else if (sig === "WAIT" && blueBull && palegreenFlipBuy && emaCrossedUp && ema10Rising) {
+      sig = "BUY";
+      reason = "PALEGREEN flip bullish (K1.5/ATR10) while BLUE bullish, 10EMA>30EMA & rising";
     }
     // ── REENTER: INFRAGREEN last-to-join + peak break + EMA10>30 & rising ──
     else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenTrig
@@ -312,12 +307,14 @@ function superUTBotStrategy(candles) {
     purplePos: purple.pos[N - 1],
     tealPos: teal.pos[N - 1],
     infraGreenPos: infraGreen.pos[N - 1],
+    palegreenPos: palegreen.pos[N - 1],
     greenTrail: green.trail[N - 1],
     blueTrail: blue.trail[N - 1],
     cyanTrail: cyan.trail[N - 1],
     purpleTrail: purple.trail[N - 1],
     tealTrail: teal.trail[N - 1],
     infraGreenTrail: infraGreen.trail[N - 1],
+    palegreenTrail: palegreen.trail[N - 1],
     ema10: ema10[N - 1],
     ema30: ema30[N - 1],
     close: C[N - 1]
