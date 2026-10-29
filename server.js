@@ -7,7 +7,7 @@ const { evaluateEMACross : NothingStrategy } = require("./strategy/evaluateEMACr
 const { surStrategy } = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
 const { claudSurStrategy : HEIKIN_TOMMAN_RE} = require("./strategy/claudSurStrategy");
-const { superUTBotStrategy } = require("./strategy/superUTBotStrategy");
+const { superUTBotStrategy : HEIKIN_DEBUGGED_RE } = require("./strategy/superUTBotStrategy");
 const { superDoubleUT } = require("./strategy/superDoubleUT");
 const { utGptStrategy : HEIKIN_SUMESH_RE } = require("./strategy/UTGPTStrategy");
 const { utGptStrategy1 : HEIKIN_SMART_BREAKOUT} = require("./strategy/UTGPTStrategy1");
@@ -79,7 +79,7 @@ const strategies = {
   surStrategy,
   chatGptStrategy,
   HEIKIN_TOMMAN_RE,
-  superUTBotStrategy,
+  HEIKIN_DEBUGGED_RE,
   superDoubleUT,
   HEIKIN_SUMESH_RE,
   HEIKIN_SMART_BREAKOUT,
