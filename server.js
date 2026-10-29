@@ -111,8 +111,9 @@ app.get("/evaluate", async (req, res) => {
   const requestedSymbol = req.query.symbol;
 
   // Heal wiped FAKE stream history on demand (no-op when healthy)
+  // Fire-and-forget: never block the eval response on a fetch to the feed server.
   if (requestedSymbol === "FAKE_CE" || requestedSymbol === "FAKE_PE") {
-    await ensureFakeStreams();
+    ensureFakeStreams();
   }
 
   // If no symbol provided, return a simple engine status
@@ -311,14 +312,16 @@ app.get("/logs/strategy", (req, res) => {
 // data already lives on the feed server, so pull it from there and re-seed.
 const FEED_NIFTY50_URL = "http://localhost:2000/nifty50-candles";
 let fakeReseedPromise = null;
+let fakeReseedCooldownUntil = 0;
 
 async function ensureFakeStreams() {
   const niftyCount = candleHistoryBySymbol.FAKE_CE?.length ?? 0;
   const peCount = candleHistoryBySymbol.FAKE_PE?.length ?? 0;
   if (niftyCount >= 100 && peCount >= 100) return; // both healthy
+  if (Date.now() < fakeReseedCooldownUntil) return; // back off after a failure
   if (!fakeReseedPromise) {
     fakeReseedPromise = (async () => {
-      const r = await fetch(FEED_NIFTY50_URL);
+      const r = await fetch(FEED_NIFTY50_URL, { signal: AbortSignal.timeout(3000) });
       const data = await r.json();
       const candles = Array.isArray(data?.completedCandles) ? data.completedCandles : [];
       if (candles.length === 0) return;
@@ -353,7 +356,10 @@ async function ensureFakeStreams() {
       }
       console.log(`[FAKE] Re-seeded FAKE_CE/FAKE_PE with ${norm.length} candles from feed server`);
     })()
-      .catch((e) => console.error("[FAKE] Re-seed failed:", e.message))
+      .catch((e) => {
+        console.error("[FAKE] Re-seed failed:", e.message);
+        fakeReseedCooldownUntil = Date.now() + 60 * 1000; // retry at most once/minute
+      })
       .finally(() => { fakeReseedPromise = null; });
   }
   await fakeReseedPromise;
