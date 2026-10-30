@@ -21,16 +21,15 @@
 //                    // 10 candles while MACD > 0 AND MACD line dipped below
 //                    // MACD_TANGLE_FLOOR (8) at the cross
 //                    // (tangling = choppy market, lookback counted from signal candle)
-//                    // Required wherever MACD is required — EXCEPT TEAL flips:
-//                    // TEAL ignores the tangle check (MACD = ON alone is enough).
+//                    // TEAL uses a shorter lookback: 5 candles instead of 10.
 //                    // Enforced only between 10:00 and 14:00
 //   WMA_CROSS = ON   // WMA30 above WMA60 (crossed upwards)
 //                    // Enforced only between 10:00 and 14:00
 //   TIME WINDOWS:
 //     Before 10:00 → either the MACD side or WMA_CROSS = ON (at least one).
-//                    MACD side = MACD + MACD_NOTANGLING for all branches
-//                    EXCEPT TEAL, where it is MACD alone.
-//     10:00–14:00  → both enforced (same TEAL exception for NOTANGLING)
+//                    MACD side = MACD + MACD_NOTANGLING (TEAL: 5-candle
+//                    tangle lookback, all others: 10 candles).
+//     10:00–14:00  → both enforced
 //     After 14:00  → both auto-pass
 //
 // BUY:      BLUE flips bullish,
@@ -39,9 +38,9 @@
 //           (only before 9:40 AM, and 10EMA > 30EMA),
 //           OR TEAL flips bullish (requires 10EMA > 30EMA strict AND
 //           10EMA rising vs 5 candles ago).
-//           BLUE, GREEN, CYAN and REENTER require MACD + MACD_NOTANGLING + WMA
-//           per the TIME WINDOWS. TEAL requires MACD + WMA only —
-//           MACD_NOTANGLING does NOT apply to TEAL.
+//           BLUE, GREEN, CYAN, TEAL and REENTER all require MACD +
+//           MACD_NOTANGLING + WMA per the TIME WINDOWS — TEAL's NOTANGLING
+//           uses a 5-candle lookback instead of 10.
 // SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
 //           PURPLE flips bearish → conditional:
 //             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
@@ -191,6 +190,7 @@ function superDoubleUT(candles) {
   // the signal candle) marks the current MACD>Signal state as a re-cross → reject.
   const MACD_TANGLE_LOOKBACK = 10;
   const MACD_TANGLE_FLOOR = 8; // tangle only counts if MACD dipped below this value
+  const TEAL_TANGLE_LOOKBACK = 5; // TEAL uses a shorter tangle lookback
 
   // Candle time in minutes (HH:MM) — used by CYAN cutoff, day-boundary and TEAL-after-10AM checks
   const candleMinutes = candles.map(cd => {
@@ -265,12 +265,21 @@ function superDoubleUT(candles) {
     //   WMA_CROSS      = ON  → WMA30 above WMA60
     const macdAbove = macdLine[i] != null && macdSignal[i] != null && macdLine[i] > macdSignal[i];
     macdTangled = false;
+    let macdTangledTeal = false;
     if (macdAbove && macdLine[i] > 0) {
       for (let j = Math.max(1, i - MACD_TANGLE_LOOKBACK); j <= i; j++) {
         if (macdLine[j] != null && macdSignal[j] != null && macdLine[j - 1] != null && macdSignal[j - 1] != null
           && macdLine[j] < macdSignal[j] && macdLine[j - 1] >= macdSignal[j - 1]
           && macdLine[j] < MACD_TANGLE_FLOOR) {
           macdTangled = true;
+          break;
+        }
+      }
+      for (let j = Math.max(1, i - TEAL_TANGLE_LOOKBACK); j <= i; j++) {
+        if (macdLine[j] != null && macdSignal[j] != null && macdLine[j - 1] != null && macdSignal[j - 1] != null
+          && macdLine[j] < macdSignal[j] && macdLine[j - 1] >= macdSignal[j - 1]
+          && macdLine[j] < MACD_TANGLE_FLOOR) {
+          macdTangledTeal = true;
           break;
         }
       }
@@ -298,11 +307,12 @@ function superDoubleUT(candles) {
       ? (macdGate || rawWma)    // before 10:00: either one suffices
       : (condA && condB);       // after 10:00: each enforced in its window
 
-    // TEAL gate: same window rules but MACD_NOTANGLING is NOT required —
-    // MACD = ON alone is enough for TEAL flips.
-    const condA_teal = !macdEnforced || rawMacd;
+    // TEAL gate: same rules as other branches — MACD + WMA per the windows —
+    // but MACD_NOTANGLING uses a shorter 5-candle lookback instead of 10.
+    const tealMacdGate = rawMacd && !macdTangledTeal;
+    const condA_teal = !macdEnforced || tealMacdGate;
     const tealMacdOK = earlyWindow
-      ? (rawMacd || rawWma)
+      ? (tealMacdGate || rawWma)
       : (condA_teal && condB);
 
     // TRENDING: true when all 5 UT Bots are bullish on this candle
@@ -380,7 +390,7 @@ function superDoubleUT(candles) {
     // ── BUY: TEAL flips bullish ──
     else if (sig === "WAIT" && tealBuyTrig && tealMacdOK && emaCrossedUp && ema10Rising) {
       sig = "BUY";
-      reason = "TEAL flip bullish (K4/ATR10) [MACD+WMA ok, tangle ignored, EMA10>30 & rising]";
+      reason = "TEAL flip bullish (K4/ATR10) [MACD+WMA ok, tangle 5-candle, EMA10>30 & rising]";
     }
     // ── REENTER: INFRAGREEN bullish + peak break + EMA10>30 & rising ──
     // If a BUY trigger within the last FAILED_BUY_MEMORY candles was blocked by
