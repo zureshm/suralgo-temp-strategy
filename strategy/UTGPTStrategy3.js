@@ -49,7 +49,9 @@
 //           of previous 30 candles + 5 pts (excl. current candle), AND
 //           10EMA > 30EMA (strict), AND 10EMA rising vs 5 candles ago.
 //           If a BUY trigger was blocked by the MACD/WMA gate within the last
-//           FAILED_BUY_MEMORY (20) candles, this fires as BUY instead of REENTER.
+//           FAILED_BUY_MEMORY (20) candles, this fires as BUY instead of REENTER —
+//           but only when INFRAGREEN was the last to join (its bullish flip
+//           happened while GREEN and BLUE were already bullish).
 //
 // =============================================================================
 
@@ -213,6 +215,9 @@ function utGptStrategy3(candles) {
   let pendingFailedBuyIdx = -Infinity;
   let pendingFailedBuyBranch = "";
 
+  // Candle index of latest INFRAGREEN bullish flip (for the strict converted-BUY rule)
+  let lastInfraGreenFlipBuyIdx = -Infinity;
+
   for (let i = 1; i < N; i++) {
     const blueBull       = blue.pos[i] === 1;
     const greenBull      = green.pos[i] === 1;
@@ -282,7 +287,7 @@ function utGptStrategy3(candles) {
     // TRENDING: true when all 5 UT Bots are bullish on this candle
     trending = blueBull && greenBull && cyanBull && purpleBull && tealBull;
 
-
+    if (infraGreenFlipBuy) lastInfraGreenFlipBuyIdx = i;
 
     let sig = "WAIT", reason = "No signal";
 
@@ -332,6 +337,13 @@ function utGptStrategy3(candles) {
     // INFRAGREEN triggers REENTER whenever it is bullish (BUGGY-style loose
     // trigger — no last-to-join requirement).
     const infraGreenTrig = infraGreenBull;
+    // Converted BUYs (REENTER upgraded to BUY via failed-BUY memory) still
+    // require the strict rule: INFRAGREEN must have been the LAST to join —
+    // its most recent bullish flip happened while GREEN and BLUE were already
+    // bullish, and it is still bullish now.
+    const idxIG = lastInfraGreenFlipBuyIdx;
+    const infraGreenTrigStrict = infraGreenBull && idxIG >= 0
+      && green.pos[idxIG] === 1 && blue.pos[idxIG] === 1;
 
     // ── BUY: BLUE flips bullish ──
     if (sig === "WAIT" && blueBuyTrig && macdWmaOK) {
@@ -358,9 +370,9 @@ function utGptStrategy3(candles) {
     // the macdWmaOK gate, this fires as BUY instead of REENTER.
     else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenTrig
       && priceBreaksPeak && emaCrossedUp && ema10Rising && macdWmaOK) {
-      if (i - pendingFailedBuyIdx <= FAILED_BUY_MEMORY) {
+      if (i - pendingFailedBuyIdx <= FAILED_BUY_MEMORY && infraGreenTrigStrict) {
         sig = "BUY";
-        reason = `BUY (re-entry): REENTER conditions met within ${FAILED_BUY_MEMORY} candles of MACD/WMA-blocked ${pendingFailedBuyBranch} | close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}`;
+        reason = `BUY (re-entry): REENTER conditions met within ${FAILED_BUY_MEMORY} candles of MACD/WMA-blocked ${pendingFailedBuyBranch} + INFRAGREEN last-to-join | close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}`;
       } else {
         sig = "REENTER";
         reason = `Auto re-entry: close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}, EMA10>30 & rising, INFRAGREEN bullish (loose)`;
