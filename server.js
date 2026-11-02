@@ -12,7 +12,7 @@ const { superDoubleUT :HEIKIN_SUPER_DOUBLE_UT } = require("./strategy/superDoubl
 const { utGptStrategy : HEIKIN_SUMESH_RE } = require("./strategy/UTGPTStrategy");
 const { utGptStrategy1 : HEIKIN_SMART_BREAKOUT} = require("./strategy/UTGPTStrategy1");
 const { utGptStrategy2 : HEIKIN_BUGGY_RE} = require("./strategy/UTGPTStrategy2");
-const { utGptStrategy3 : HEIKIN_UnderConstruction } = require("./strategy/UTGPTStrategy3");
+const { utGptStrategy3 : HEIKIN_Undertaker} = require("./strategy/UTGPTStrategy3");
 const { VWAPUTBotStrategy: HEIKIN_CHATGPT} = require("./strategy/VWAPUTBotStrategy");
 const { sumeshStrategy :SUMESH_STRATEGY } = require("./strategy/SumeshStrategy");
 const { utGptStrategy4: HEIKIN_DINKAN_RE } = require("./strategy/UTGPTStrategy4");
@@ -84,7 +84,7 @@ const strategies = {
   HEIKIN_SUMESH_RE,
   HEIKIN_SMART_BREAKOUT,
   HEIKIN_BUGGY_RE,
-  HEIKIN_UnderConstruction,
+  HEIKIN_Undertaker,
   HEIKIN_CHATGPT,
   SUMESH_STRATEGY,
   HEIKIN_DINKAN_RE,
