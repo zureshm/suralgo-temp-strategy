@@ -370,9 +370,15 @@ function utGptStrategy3(candles) {
     // the macdWmaOK gate, this fires as BUY instead of REENTER.
     else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenTrig
       && priceBreaksPeak && emaCrossedUp && ema10Rising && macdWmaOK) {
-      if (i - pendingFailedBuyIdx <= FAILED_BUY_MEMORY && infraGreenTrigStrict) {
-        sig = "BUY";
-        reason = `BUY (re-entry): REENTER conditions met within ${FAILED_BUY_MEMORY} candles of MACD/WMA-blocked ${pendingFailedBuyBranch} + INFRAGREEN last-to-join | close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}`;
+      if (i - pendingFailedBuyIdx <= FAILED_BUY_MEMORY) {
+        // A blocked BUY is in memory: only convert to BUY under the strict
+        // last-to-join rule. If it fails, emit WAIT (same as TOMMAN) so the
+        // failed-BUY memory survives for a later strict candle — firing a
+        // loose REENTER here would consume the memory without converting.
+        if (infraGreenTrigStrict) {
+          sig = "BUY";
+          reason = `BUY (re-entry): REENTER conditions met within ${FAILED_BUY_MEMORY} candles of MACD/WMA-blocked ${pendingFailedBuyBranch} + INFRAGREEN last-to-join | close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}`;
+        }
       } else {
         sig = "REENTER";
         reason = `Auto re-entry: close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}, EMA10>30 & rising, INFRAGREEN bullish (loose)`;
