@@ -6,7 +6,7 @@ const cors = require("cors");
 const { evaluateEMACross : NothingStrategy } = require("./strategy/evaluateEMACross");
 const { surStrategy } = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
-const { VWAPUTBotStrategy: HEIKIN_CHATGPT} = require("./strategy/VWAPUTBotStrategy");
+const { VWAPUTBotStrategy: HEIKIN_TERROR} = require("./strategy/VWAPUTBotStrategy");
 const { claudSurStrategy : HEIKIN_TOMMAN_RE} = require("./strategy/claudSurStrategy");
 const { superUTBotStrategy : HEIKIN_DEBUGGED_RE } = require("./strategy/superUTBotStrategy");
 const { superDoubleUT :HEIKIN_SUPER_DOUBLE_UT } = require("./strategy/superDoubleUT");
@@ -80,7 +80,7 @@ const strategies = {
   chatGptStrategy,
   HEIKIN_SUPER_DOUBLE_UT,
   HEIKIN_SUMESH_RE,
-  HEIKIN_CHATGPT,
+  HEIKIN_TERROR,
   SUMESH_STRATEGY,
   HEIKIN_CAREFUL_RE,
   HEIKIN_DINKAN_RE,
