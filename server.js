@@ -4,7 +4,7 @@ const express = require("express");
 const cors = require("cors");
 
 const { evaluateEMACross : NothingStrategy } = require("./strategy/evaluateEMACross");
-const { surStrategy } = require("./strategy/surStrategy");
+const { surStrategy : SURESH_STRATEGY } = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
 const { VWAPUTBotStrategy: HEIKIN_TERROR} = require("./strategy/VWAPUTBotStrategy");
 const { claudSurStrategy : HEIKIN_TOMMAN_RE} = require("./strategy/claudSurStrategy");
@@ -76,7 +76,7 @@ const PORT = 4000;
 // Strategy map
 const strategies = {
   NothingStrategy,
-  surStrategy,
+  SURESH_STRATEGY,
   chatGptStrategy,
   HEIKIN_SUPER_DOUBLE_UT,
   HEIKIN_SUMESH_RE,
