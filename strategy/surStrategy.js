@@ -12,15 +12,24 @@
 //     Trigger Smoothing=4 (+1), ATR Length=200, Multiplier=6, Range=Body,
 //     Color Style=MA Direction.
 //
-// BUY:     UT Bot flips bullish — ONLY when SRMA is not red.
-//          (SRMA red/bear tone → BUY suppressed. Grey/green or not yet
-//           warmed up → BUY allowed.)
-// SELL:    UT Bot flips bearish (unchanged).
+// SIGNALS (bar-by-bar replay, closed candles):
+//
+// SELL:    UT Bot flips bearish (unchanged). A SELL during SRMA grey also
+//          arms the caution window below.
 // REENTER: UT Bot already bullish AND INFRAGREEN flips bullish,
 //          AND 10EMA already above 30EMA (upward cross has occurred),
 //          AND 10EMA rising vs 5 candles ago,
 //          AND WMA30 above WMA60 (already crossed upwards).
-//          (unchanged — REENTER not gated by SRMA)
+// BUY:     UT Bot flips bullish.
+//
+// SRMA sideways-caution rules (gate BOTH BUY and REENTER):
+//   - SRMA red          → suppressed.
+//   - SRMA red → grey   → 20-candle caution window opens. While grey inside
+//                         the window, BUY/REENTER suppressed. Green SRMA
+//                         ends the caution early (allowed again). Red resets.
+//   - UT Bot SELL during grey → same 20-candle caution window opens.
+//   - Window expired still grey → buy-side signals allowed only if the
+//                         candle close is above the SRMA line.
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -260,40 +269,82 @@ function surStrategy(candles) {
 
   const srma = sentimentRangeMA(O, H, L, C); // SRMA, frontend defaults
 
-  const i = N - 1;
+  // ── Bar-by-bar replay (SRMA caution state needs transition history) ──
+  const CAUTION_WINDOW = 20; // candles after red→grey / SELL-in-grey
+  let cautionLeft = 0;       // candles remaining inside the caution window
+  let postCautionGrey = false; // window expired while still grey → need close>SRMA
   let signal = "WAIT";
   let reason = "No flip";
 
-  const srmaRed = srma.tone[i] === "bear"; // SRMA red → no BUY
+  for (let i = 1; i < N; i++) {
+    signal = "WAIT";
+    reason = "No flip";
 
-  if (bot.pos[i] === 1 && bot.pos[i - 1] !== 1) {
-    if (srmaRed) {
-      reason = "UT Bot flipped bullish but SRMA is red — BUY suppressed";
-    } else {
-      signal = "BUY";
-      reason = "UT Bot flipped bullish";
+    const tone = srma.tone[i];
+    const prevTone = srma.tone[i - 1];
+
+    // ── SRMA sideways-caution state ──
+    if (prevTone === "bear" && tone === "neutral") { cautionLeft = CAUTION_WINDOW; postCautionGrey = false; }
+    if (tone === "bull" || tone === "bear") { cautionLeft = 0; postCautionGrey = false; }
+
+    // buy-side gate from SRMA
+    let srmaBlockReason = null;
+    if (tone === "bear") {
+      srmaBlockReason = "SRMA is red";
+    } else if (tone === "neutral") {
+      if (cautionLeft > 0) srmaBlockReason = "SRMA grey, inside 20-candle caution";
+      else if (postCautionGrey && !(srma.ma[i] != null && C[i] > srma.ma[i]))
+        srmaBlockReason = "SRMA grey past caution, close not above SRMA";
     }
-  } else if (bot.pos[i] === -1 && bot.pos[i - 1] !== -1) {
-    signal = "SELL";
-    reason = "UT Bot flipped bearish";
-  } else {
-    // ── REENTER gates ──
-    const infraGreenFlipBuy = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
-    const emaCrossedUp = ema10[i] != null && ema30[i] != null && ema10[i] > ema30[i];
-    const ema10Rising = i >= REENTER_EMA_LOOKBACK
-      && ema10[i] != null && ema10[i - REENTER_EMA_LOOKBACK] != null
-      && ema10[i] > ema10[i - REENTER_EMA_LOOKBACK];
-    const wmaCrossedUp = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
 
-    if (bot.pos[i] === 1 && infraGreenFlipBuy && emaCrossedUp && ema10Rising && wmaCrossedUp) {
-      signal = "REENTER";
-      reason = "INFRAGREEN flip bullish (K0.8/ATR10) while UT Bot bullish, 10EMA>30EMA rising, WMA30>WMA60";
+    const bullFlip = bot.pos[i] === 1 && bot.pos[i - 1] !== 1;
+    const bearFlip = bot.pos[i] === -1 && bot.pos[i - 1] !== -1;
+
+    if (bearFlip) {
+      signal = "SELL";
+      reason = "UT Bot flipped bearish";
+      // SELL during grey arms the same 20-candle caution
+      if (tone === "neutral") { cautionLeft = CAUTION_WINDOW; postCautionGrey = false; }
+    } else if (bullFlip) {
+      if (srmaBlockReason) {
+        reason = `UT Bot flipped bullish but ${srmaBlockReason} — BUY suppressed`;
+      } else {
+        signal = "BUY";
+        reason = "UT Bot flipped bullish";
+      }
+    } else {
+      // ── REENTER gates ──
+      const infraGreenFlipBuy = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
+      const emaCrossedUp = ema10[i] != null && ema30[i] != null && ema10[i] > ema30[i];
+      const ema10Rising = i >= REENTER_EMA_LOOKBACK
+        && ema10[i] != null && ema10[i - REENTER_EMA_LOOKBACK] != null
+        && ema10[i] > ema10[i - REENTER_EMA_LOOKBACK];
+      const wmaCrossedUp = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
+
+      if (bot.pos[i] === 1 && infraGreenFlipBuy && emaCrossedUp && ema10Rising && wmaCrossedUp) {
+        if (srmaBlockReason) {
+          reason = `INFRAGREEN flip bullish but ${srmaBlockReason} — REENTER suppressed`;
+        } else {
+          signal = "REENTER";
+          reason = "INFRAGREEN flip bullish (K0.8/ATR10) while UT Bot bullish, 10EMA>30EMA rising, WMA30>WMA60";
+        }
+      }
+    }
+
+    // end of bar: tick the caution window down
+    if (cautionLeft > 0) {
+      cautionLeft -= 1;
+      if (cautionLeft === 0 && tone === "neutral") postCautionGrey = true;
     }
   }
+
+  const i = N - 1;
 
   return {
     signal,
     reason,
+    srmaCaution: cautionLeft,
+    srmaPostCautionGrey: postCautionGrey,
     botPos: bot.pos[i],
     botTrail: bot.trail[i],
     infraGreenPos: infraGreen.pos[i],
