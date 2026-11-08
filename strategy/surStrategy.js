@@ -4,6 +4,7 @@
 // Same signal engine as SumeshStrategy (normal candles):
 //   - GREEN (UT Bot):  Key Value = 2, ATR Period = 10 (main signal)
 //   - BLUE (UT Bot):   Key Value = 3, ATR Period = 10 (deferred BUY trigger)
+//   - PURPLE (UT Bot): Key Value = 1, ATR Period = 10 (once-per-green BUY)
 //   - INFRAGREEN (UT Bot 2): Key Value = 0.8, ATR Period = 10 (re-entry trigger)
 //   - 10EMA / 30EMA on close
 //   - WMA30 / WMA60 on close
@@ -36,7 +37,8 @@
 // SRMA sideways-caution rules (gate BOTH BUY and REENTER):
 //   - SRMA is considered ONLY between 09:45 and 15:00 (candle time).
 //     Outside that window all SRMA checks are skipped — BUY/REENTER are
-//     never suppressed and BLUE's fire needs no green tone.
+//     never suppressed, BLUE's fire needs no green tone — EXCEPT PURPLE,
+//     which always requires SRMA green (ignores the window).
 //   - HARD RULE: no BUY-side signal when candle close is at/below the
 //     SRMA line — applies even when SRMA is green.
 //   - SRMA red          → suppressed.
@@ -57,6 +59,18 @@
 //     when the whole candle (wick included, low > SRMA) is above the
 //     SRMA line. Expires unfired after 15 candles;
 //     cancelled on a GREEN or BLUE bearish flip.
+//   - GREY FRAGMENT extra: during SRMA grey the fire additionally needs
+//     no BLUE bearish flip within the previous 10 candles.
+// BUY (PURPLE): PURPLE flips bullish → BUY only when ALL hold:
+//          (1) SRMA is green — NOT time-windowed (may fire pre-9:45),
+//          (2) close is higher than the previous 3 candles' closes,
+//          (3) the whole candle — wick included (low > SRMA) — is above
+//              the SRMA line, no touching,
+//          (4) no GREEN or BLUE BUY has fired during this green SRMA
+//              fragment,
+//          (5) PURPLE has not already fired during this green fragment,
+//          (6) GREEN is already bullish.
+//          Fires at most once per continuous green-SRMA fragment.
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -296,6 +310,7 @@ function surStrategy(candles) {
 
   const green = utBotSeries(H, L, C, 2, 10);        // GREEN (Key=2, ATR=10) — main signal
   const blue  = utBotSeries(H, L, C, 3, 10);        // BLUE  (Key=3, ATR=10) — deferred trigger
+  const purple = utBotSeries(H, L, C, 1, 10);       // PURPLE (Key=1, ATR=10) — once-per-green BUY
   const infraGreen = utBotSeries(H, L, C, 0.8, 10); // INFRAGREEN (Key=0.8, ATR=10)
 
   const ema10 = emaSeries(C, 10); // 10EMA on close
@@ -313,6 +328,10 @@ function surStrategy(candles) {
   const BLUE_WINDOW = 15;    // candles BLUE's BUY trigger stays armed
   const BLUE_ENABLED = true; // BLUE deferred BUY trigger
   let blueTrigger = 0;       // candles remaining on BLUE's held BUY trigger
+  let lastBlueBear = -Infinity; // bar index of last BLUE bearish flip (grey-fragment embargo)
+  let inGreenFragment = false; // currently inside a continuous SRMA-green stretch
+  let purpleUsed = false;      // PURPLE already fired this green fragment
+  let greenBlueBuyUsed = false; // GREEN/BLUE BUY already fired this green fragment
   let signal = "WAIT";
   let reason = "No flip";
 
@@ -322,6 +341,13 @@ function surStrategy(candles) {
 
     const tone = srma.tone[i];
     const prevTone = srma.tone[i - 1];
+
+    // ── PURPLE once-per-green-fragment bookkeeping ──
+    if (tone === "bull") {
+      if (!inGreenFragment) { inGreenFragment = true; purpleUsed = false; greenBlueBuyUsed = false; }
+    } else {
+      inGreenFragment = false;
+    }
 
     // ── SRMA sideways-caution state ──
     if (prevTone === "bear" && tone === "neutral") { cautionLeft = CAUTION_WINDOW; postCautionGrey = false; }
@@ -349,7 +375,7 @@ function surStrategy(candles) {
 
     // ── BLUE trigger arming: bullish flip while GREEN ALREADY bullish ──
     if (BLUE_ENABLED && blueBullFlip && green.pos[i] === 1 && green.pos[i - 1] === 1) blueTrigger = BLUE_WINDOW;
-    if (blueBearFlip) blueTrigger = 0; // BLUE going bearish kills its held trigger
+    if (blueBearFlip) { blueTrigger = 0; lastBlueBear = i; } // BLUE going bearish kills its held trigger + stamps embargo
 
     if (bearFlip) {
       signal = "SELL";
@@ -390,7 +416,8 @@ function surStrategy(candles) {
       const candleAboveSrma = srma.ma[i] != null && L[i] > srma.ma[i]; // whole candle incl. wick above SRMA
       const srmaOkForFire = !srmaActive || tone === "bull" || candleAboveSrma;
       const closeAboveSrma = !srmaActive || srma.ma[i] == null || C[i] > srma.ma[i];
-      if (srmaOkForFire && closeAboveSrma && C[i] > O[i] && C[i] > highestClose20) {
+      const blueBearClear = tone !== "neutral" || i - lastBlueBear > 10; // grey-fragment embargo
+      if (srmaOkForFire && closeAboveSrma && blueBearClear && C[i] > O[i] && C[i] > highestClose20) {
         signal = "BUY";
         reason = tone === "bull"
           ? "BLUE trigger fired: bullish flip while GREEN bullish → SRMA green + green candle closing above 20-candle closes → BUY"
@@ -398,6 +425,21 @@ function surStrategy(candles) {
         blueTrigger = 0;
       } else {
         blueTrigger -= 1;
+      }
+    }
+
+    // a GREEN/BLUE BUY fired during a green fragment consumes PURPLE's slot
+    if (signal === "BUY" && tone === "bull") greenBlueBuyUsed = true;
+
+    // ── PURPLE: once-per-green-fragment BUY ──
+    if (signal === "WAIT" && tone === "bull" && green.pos[i] === 1 && !purpleUsed && !greenBlueBuyUsed) {
+      const purpleBullFlip = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
+      let highestClose3 = -Infinity;
+      for (let j = Math.max(0, i - 3); j < i; j++) if (C[j] > highestClose3) highestClose3 = C[j];
+      if (purpleBullFlip && C[i] > highestClose3 && srma.ma[i] != null && L[i] > srma.ma[i]) {
+        signal = "BUY";
+        reason = "PURPLE flipped bullish, SRMA green, close above prev 3 candles, candle fully above SRMA → BUY";
+        purpleUsed = true;
       }
     }
 
@@ -420,6 +462,8 @@ function surStrategy(candles) {
     bluePos: blue.pos[i],
     blueTrail: blue.trail[i],
     blueTrigger,
+    purplePos: purple.pos[i],
+    purpleTrail: purple.trail[i],
     infraGreenPos: infraGreen.pos[i],
     ema10: ema10[i],
     ema30: ema30[i],
