@@ -2,7 +2,8 @@
 // surStrategy — SumeshStrategy copy + Sentiment Range MA (SRMA) filter
 //
 // Same signal engine as SumeshStrategy (normal candles):
-//   - UT Bot (main): Key Value = 2, ATR Period = 10
+//   - GREEN (UT Bot):  Key Value = 2, ATR Period = 10 (main signal)
+//   - BLUE (UT Bot):   Key Value = 3, ATR Period = 10 (deferred BUY trigger)
 //   - INFRAGREEN (UT Bot 2): Key Value = 0.8, ATR Period = 10 (re-entry trigger)
 //   - 10EMA / 30EMA on close
 //   - WMA30 / WMA60 on close
@@ -14,22 +15,48 @@
 //
 // SIGNALS (bar-by-bar replay, closed candles):
 //
-// SELL:    UT Bot flips bearish (unchanged). A SELL during SRMA grey also
+// SELL:    GREEN flips bearish (unchanged). A SELL during SRMA grey also
 //          arms the caution window below.
-// REENTER: UT Bot already bullish AND INFRAGREEN flips bullish,
+// REENTER: GREEN already bullish AND INFRAGREEN flips bullish,
 //          AND 10EMA already above 30EMA (upward cross has occurred),
 //          AND 10EMA rising vs 5 candles ago,
 //          AND WMA30 above WMA60 (already crossed upwards).
-// BUY:     UT Bot flips bullish.
+// BUY:     GREEN flips bullish — subject to the SRMA gate below:
+//          suppressed when SRMA is red, inside the 20-candle caution
+//          window after red→grey or a SELL-in-grey, and during post-
+//          caution grey unless the close is above the SRMA line.
+//          Outside 09:45–15:00 all SRMA checks are skipped → always BUY.
+// BUY (BLUE): BLUE flips bullish while GREEN already bullish → holds a BUY
+//          trigger for the next 15 candles; fires on a green candle
+//          (close>open) closing above the highest close of the previous
+//          20 candles AND either: (a) SRMA is green, OR (b) the entire
+//          candle — wick included (low > SRMA) — sits above the SRMA
+//          line, which needs no green tone. See BLUE section below.
 //
 // SRMA sideways-caution rules (gate BOTH BUY and REENTER):
+//   - SRMA is considered ONLY between 09:45 and 15:00 (candle time).
+//     Outside that window all SRMA checks are skipped — BUY/REENTER are
+//     never suppressed and BLUE's fire needs no green tone.
+//   - HARD RULE: no BUY-side signal when candle close is at/below the
+//     SRMA line — applies even when SRMA is green.
 //   - SRMA red          → suppressed.
 //   - SRMA red → grey   → 20-candle caution window opens. While grey inside
 //                         the window, BUY/REENTER suppressed. Green SRMA
 //                         ends the caution early (allowed again). Red resets.
-//   - UT Bot SELL during grey → same 20-candle caution window opens.
+//   - GREEN SELL during grey → same 20-candle caution window opens.
 //   - Window expired still grey → buy-side signals allowed only if the
 //                         candle close is above the SRMA line.
+//
+// BLUE held trigger (deferred BUY):
+//   - BLUE flips bullish while GREEN is ALREADY bullish (i.e. GREEN bullish
+//     but its BUY did not / could not fire) → a BUY trigger is held armed
+//     for the next 15 candles.
+//   - While armed, the held trigger fires → BUY on a green candle
+//     (close>open) closing above the highest close of the previous 20
+//     candles, when SRMA is green — OR, without needing the green tone,
+//     when the whole candle (wick included, low > SRMA) is above the
+//     SRMA line. Expires unfired after 15 candles;
+//     cancelled on a GREEN or BLUE bearish flip.
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -247,6 +274,15 @@ function sentimentRangeMA(O, H, L, C, opts = {}) {
 // 10EMA rising lookback for REENTER (candles ago), same as DINKAN/TOMMAN
 const REENTER_EMA_LOOKBACK = 5;
 
+// SRMA rules apply only within 09:45–15:00 candle time
+function srmaWindowActive(candleTime) {
+  if (candleTime == null) return true; // no time info → apply SRMA
+  const m = String(candleTime).match(/(\d{2}):(\d{2})/);
+  if (!m) return true;
+  const mins = (+m[1]) * 60 + (+m[2]);
+  return mins >= 9 * 60 + 45 && mins < 15 * 60;
+}
+
 function surStrategy(candles) {
   if (!candles || candles.length < 20) {
     return { signal: "WAIT", reason: "Not enough data" };
@@ -258,7 +294,8 @@ function surStrategy(candles) {
   const C = candles.map(c => Number(c.close));
   const N = C.length;
 
-  const bot = utBotSeries(H, L, C, 2, 10);          // main UT Bot (Key=2, ATR=10)
+  const green = utBotSeries(H, L, C, 2, 10);        // GREEN (Key=2, ATR=10) — main signal
+  const blue  = utBotSeries(H, L, C, 3, 10);        // BLUE  (Key=3, ATR=10) — deferred trigger
   const infraGreen = utBotSeries(H, L, C, 0.8, 10); // INFRAGREEN (Key=0.8, ATR=10)
 
   const ema10 = emaSeries(C, 10); // 10EMA on close
@@ -273,6 +310,9 @@ function surStrategy(candles) {
   const CAUTION_WINDOW = 20; // candles after red→grey / SELL-in-grey
   let cautionLeft = 0;       // candles remaining inside the caution window
   let postCautionGrey = false; // window expired while still grey → need close>SRMA
+  const BLUE_WINDOW = 15;    // candles BLUE's BUY trigger stays armed
+  const BLUE_ENABLED = true; // BLUE deferred BUY trigger
+  let blueTrigger = 0;       // candles remaining on BLUE's held BUY trigger
   let signal = "WAIT";
   let reason = "No flip";
 
@@ -287,30 +327,42 @@ function surStrategy(candles) {
     if (prevTone === "bear" && tone === "neutral") { cautionLeft = CAUTION_WINDOW; postCautionGrey = false; }
     if (tone === "bull" || tone === "bear") { cautionLeft = 0; postCautionGrey = false; }
 
-    // buy-side gate from SRMA
+    // buy-side gate from SRMA (only inside the 09:45–15:00 window)
+    const srmaActive = srmaWindowActive(candles[i].time);
     let srmaBlockReason = null;
-    if (tone === "bear") {
-      srmaBlockReason = "SRMA is red";
-    } else if (tone === "neutral") {
-      if (cautionLeft > 0) srmaBlockReason = "SRMA grey, inside 20-candle caution";
-      else if (postCautionGrey && !(srma.ma[i] != null && C[i] > srma.ma[i]))
-        srmaBlockReason = "SRMA grey past caution, close not above SRMA";
+    if (srmaActive) {
+      if (srma.ma[i] != null && C[i] <= srma.ma[i]) {
+        srmaBlockReason = "candle close at/below SRMA";
+      } else if (tone === "bear") {
+        srmaBlockReason = "SRMA is red";
+      } else if (tone === "neutral") {
+        if (cautionLeft > 0) srmaBlockReason = "SRMA grey, inside 20-candle caution";
+        else if (postCautionGrey && !(srma.ma[i] != null && C[i] > srma.ma[i]))
+          srmaBlockReason = "SRMA grey past caution, close not above SRMA";
+      }
     }
 
-    const bullFlip = bot.pos[i] === 1 && bot.pos[i - 1] !== 1;
-    const bearFlip = bot.pos[i] === -1 && bot.pos[i - 1] !== -1;
+    const bullFlip = green.pos[i] === 1 && green.pos[i - 1] !== 1;
+    const bearFlip = green.pos[i] === -1 && green.pos[i - 1] !== -1;
+    const blueBullFlip = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
+    const blueBearFlip = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
+
+    // ── BLUE trigger arming: bullish flip while GREEN ALREADY bullish ──
+    if (BLUE_ENABLED && blueBullFlip && green.pos[i] === 1 && green.pos[i - 1] === 1) blueTrigger = BLUE_WINDOW;
+    if (blueBearFlip) blueTrigger = 0; // BLUE going bearish kills its held trigger
 
     if (bearFlip) {
       signal = "SELL";
-      reason = "UT Bot flipped bearish";
+      reason = "GREEN flipped bearish";
+      blueTrigger = 0;
       // SELL during grey arms the same 20-candle caution
       if (tone === "neutral") { cautionLeft = CAUTION_WINDOW; postCautionGrey = false; }
     } else if (bullFlip) {
       if (srmaBlockReason) {
-        reason = `UT Bot flipped bullish but ${srmaBlockReason} — BUY suppressed`;
+        reason = `GREEN flipped bullish but ${srmaBlockReason} — BUY suppressed`;
       } else {
         signal = "BUY";
-        reason = "UT Bot flipped bullish";
+        reason = "GREEN flipped bullish";
       }
     } else {
       // ── REENTER gates ──
@@ -321,13 +373,31 @@ function surStrategy(candles) {
         && ema10[i] > ema10[i - REENTER_EMA_LOOKBACK];
       const wmaCrossedUp = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
 
-      if (bot.pos[i] === 1 && infraGreenFlipBuy && emaCrossedUp && ema10Rising && wmaCrossedUp) {
+      if (green.pos[i] === 1 && infraGreenFlipBuy && emaCrossedUp && ema10Rising && wmaCrossedUp) {
         if (srmaBlockReason) {
           reason = `INFRAGREEN flip bullish but ${srmaBlockReason} — REENTER suppressed`;
         } else {
           signal = "REENTER";
-          reason = "INFRAGREEN flip bullish (K0.8/ATR10) while UT Bot bullish, 10EMA>30EMA rising, WMA30>WMA60";
+          reason = "INFRAGREEN flip bullish (K0.8/ATR10) while GREEN bullish, 10EMA>30EMA rising, WMA30>WMA60";
         }
+      }
+    }
+
+    // ── BLUE held trigger: SRMA green/body-above + green candle + 20-candle close breakout ──
+    if (signal === "WAIT" && blueTrigger > 0) {
+      let highestClose20 = -Infinity;
+      for (let j = Math.max(0, i - 20); j < i; j++) if (C[j] > highestClose20) highestClose20 = C[j];
+      const candleAboveSrma = srma.ma[i] != null && L[i] > srma.ma[i]; // whole candle incl. wick above SRMA
+      const srmaOkForFire = !srmaActive || tone === "bull" || candleAboveSrma;
+      const closeAboveSrma = !srmaActive || srma.ma[i] == null || C[i] > srma.ma[i];
+      if (srmaOkForFire && closeAboveSrma && C[i] > O[i] && C[i] > highestClose20) {
+        signal = "BUY";
+        reason = tone === "bull"
+          ? "BLUE trigger fired: bullish flip while GREEN bullish → SRMA green + green candle closing above 20-candle closes → BUY"
+          : "BLUE trigger fired: bullish flip while GREEN bullish → candle fully above SRMA + closing above 20-candle closes → BUY";
+        blueTrigger = 0;
+      } else {
+        blueTrigger -= 1;
       }
     }
 
@@ -345,8 +415,11 @@ function surStrategy(candles) {
     reason,
     srmaCaution: cautionLeft,
     srmaPostCautionGrey: postCautionGrey,
-    botPos: bot.pos[i],
-    botTrail: bot.trail[i],
+    greenPos: green.pos[i],
+    greenTrail: green.trail[i],
+    bluePos: blue.pos[i],
+    blueTrail: blue.trail[i],
+    blueTrigger,
     infraGreenPos: infraGreen.pos[i],
     ema10: ema10[i],
     ema30: ema30[i],

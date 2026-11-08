@@ -92,7 +92,7 @@ const strategies = {
 };
 
 // Active strategy (default)
-let activeStrategy = "SUMESH_STRATEGY";
+let activeStrategy = "SURESH_STRATEGY";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};
