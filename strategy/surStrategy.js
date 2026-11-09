@@ -35,8 +35,9 @@
 // BUY (PURPLE): PURPLE flips bullish while GREEN already bullish AND
 //          SRMA green → BUY when close beats the previous 3 closes and
 //          the whole candle (wick included) is above SRMA; at most once
-//          per green SRMA fragment, and never after a GREEN/BLUE BUY in
-//          the same fragment. See PURPLE section below.
+//          per green SRMA fragment — PURPLE is the FIRST signal of the
+//          fragment (no GREEN/BLUE BUY inside it) and GREEN's bullish
+//          condition must predate the fragment. See PURPLE section below.
 //
 // SRMA sideways-caution rules (gate BOTH BUY and REENTER):
 //   - SRMA is considered at all times (no time window).
@@ -70,7 +71,10 @@
 //          (4) no GREEN or BLUE BUY has fired during this green SRMA
 //              fragment,
 //          (5) PURPLE has not already fired during this green fragment,
-//          (6) GREEN is already bullish.
+//          (6) GREEN is already bullish — carried in from BEFORE the
+//              fragment (bullish at the fragment's first bar, i.e. its
+//              flip happened in the non-green zone; a fresh GREEN flip
+//              inside the green doesn't qualify).
 //          Fires at most once per continuous green-SRMA fragment.
 // =============================================================================
 
@@ -293,6 +297,9 @@ function surStrategy(candles) {
   if (!candles || candles.length < 20) {
     return { signal: "WAIT", reason: "Not enough data" };
   }
+  // Same window the chart uses (ChartDesktop: merged.slice(-700)) so the
+  // backend SRMA anchor path matches what you see on screen.
+  candles = candles.slice(-700);
 
   const O = candles.map(c => Number(c.open));
   const H = candles.map(c => Number(c.high));
@@ -324,6 +331,7 @@ function surStrategy(candles) {
   let inGreenFragment = false; // currently inside a continuous SRMA-green stretch
   let purpleUsed = false;      // PURPLE already fired this green fragment
   let greenBlueBuyUsed = false; // GREEN/BLUE BUY already fired this green fragment
+  let greenBullAtFragStart = false; // GREEN was already bullish when this green fragment began
   let signal = "WAIT";
   let reason = "No flip";
 
@@ -336,7 +344,10 @@ function surStrategy(candles) {
 
     // ── PURPLE once-per-green-fragment bookkeeping ──
     if (tone === "bull") {
-      if (!inGreenFragment) { inGreenFragment = true; purpleUsed = false; greenBlueBuyUsed = false; }
+      if (!inGreenFragment) {
+        inGreenFragment = true; purpleUsed = false; greenBlueBuyUsed = false;
+        greenBullAtFragStart = green.pos[i] === 1; // GREEN carried in bullish from the non-green zone
+      }
     } else {
       inGreenFragment = false;
     }
@@ -421,7 +432,7 @@ function surStrategy(candles) {
     if (signal === "BUY" && tone === "bull") greenBlueBuyUsed = true;
 
     // ── PURPLE: once-per-green-fragment BUY ──
-    if (signal === "WAIT" && tone === "bull" && green.pos[i] === 1 && !purpleUsed && !greenBlueBuyUsed) {
+    if (signal === "WAIT" && tone === "bull" && green.pos[i] === 1 && greenBullAtFragStart && !purpleUsed && !greenBlueBuyUsed) {
       const purpleBullFlip = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
       let highestClose3 = -Infinity;
       for (let j = Math.max(0, i - 3); j < i; j++) if (C[j] > highestClose3) highestClose3 = C[j];
