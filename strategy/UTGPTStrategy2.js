@@ -1,38 +1,82 @@
 // =============================================================================
-// UTGPTStrategy2 — Quint UT Bot Strategy with EMA-gated Re-entry (Heikin-Ashi)
+// surStrategy — SumeshStrategy copy + Sentiment Range MA (SRMA) filter
 //
-// INDICATORS & CONFIGURATION:
-//   - GREEN  (UT Bot 1): Key Value = 2, ATR Period = 10
-//   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
-//   - CYAN   (UT Bot 3): Key Value = 2, ATR Period = 300
-//   - PURPLE (UT Bot 4): Key Value = 1, ATR Period = 10
-//   - TEAL   (UT Bot 5): Key Value = 4, ATR Period = 10
-//   - INFRAGREEN (UT Bot 6): Key Value = 0.5, ATR Period = 10 (Auto-reentry trigger)
-//   - 10EMA and 30EMA calculated on Heikin-Ashi close.
+// Same signal engine as SumeshStrategy (normal candles):
+//   - GREEN (UT Bot):  Key Value = 2, ATR Period = 10 (main signal)
+//   - BLUE (UT Bot):   Key Value = 3, ATR Period = 10 (deferred BUY trigger)
+//   - PURPLE (UT Bot): Key Value = 1, ATR Period = 10 (once-per-green BUY)
+//   - INFRAGREEN (UT Bot 2): Key Value = 0.8, ATR Period = 10 (re-entry trigger)
+//   - 10EMA / 30EMA on close
+//   - WMA30 / WMA60 on close
+//   - SRMA (Sentiment Range MA [ChartPrime]) — faithful port of the frontend
+//     implementation in suralgo-frontend/lib/strategy-chart.ts
+//     (calculateSentimentRangeMA). Defaults: Length=20 (+1), Double Filter=ON,
+//     Trigger Smoothing=4 (+1), ATR Length=200, Multiplier=6, Range=Body,
+//     Color Style=MA Direction.
 //
-// Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
+// SIGNALS (bar-by-bar replay, closed candles):
 //
-// BUY:      BLUE flips bullish (blocked if TEAL flipped bullish TODAY at/after
-//           10:00 and is still bullish — TEAL flipped yesterday/before 10:00 or
-//           a same-candle TEAL+BLUE flip still buys),
-//           OR BLUE already bullish and GREEN flips bullish,
-//           OR BLUE & GREEN already bullish and CYAN flips bullish
-//           (only before 10:30 AM, and 10EMA > 30EMA),
-//           OR TEAL flips bullish.
-// SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
-//           PURPLE flips bearish → conditional:
-//             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
-//             - If NOT touching 30EMA → pending PURPLE sell stored in memory.
-//               Subsequent candles are watched until any signal fires or PURPLE
-//               flips bullish:
-//               (a) candle HA low ≤ 30EMA → confirm SELL.
-//               (b) candle HA high < pending HIGH AND HA low < pending LOW
-//                   (lower high + lower low) → confirm SELL.
-// REENTER:  INFRAGREEN is bullish (window = while it stays bullish) while
-//           GREEN, BLUE, and PURPLE are bullish, AND close > highest HA close
-//           of previous 30 candles + 5 pts (excl. current candle), AND
-//           10EMA > 30EMA (strict), AND 10EMA rising vs 5 candles ago.
+// SELL:    GREEN flips bearish on HEIKIN-ASHI candles (K2/ATR10) — HA
+//          smooths wicks so bearish flips arrive later, holding winners
+//          longer. A SELL during SRMA grey also arms the caution window.
+// REENTER: GREEN already bullish AND INFRAGREEN flips bullish,
+//          AND 10EMA already above 30EMA (upward cross has occurred),
+//          AND 10EMA rising vs 5 candles ago,
+//          AND WMA30 above WMA60 (already crossed upwards).
+// BUY:     GREEN flips bullish — subject to the SRMA gate below:
+//          suppressed when SRMA is red, inside the 20-candle caution
+//          window after red→grey or a SELL-in-grey, and during post-
+//          caution grey unless the close is above the SRMA line.
+// BUY (BLUE): BLUE flips bullish while GREEN already bullish → holds a BUY
+//          trigger for the next 15 candles; fires on a green candle
+//          (close>open) closing above the highest close of the previous
+//          20 candles AND either: (a) SRMA is green, OR (b) the entire
+//          candle — wick included (low > SRMA) — sits above the SRMA
+//          line, which needs no green tone. See BLUE section below.
+// BUY (PURPLE): PURPLE flips bullish while GREEN already bullish AND
+//          SRMA green → BUY when close beats the previous 3 closes and
+//          the whole candle (wick included) is above SRMA; at most once
+//          per green SRMA fragment — PURPLE is the FIRST signal of the
+//          fragment (no GREEN/BLUE BUY inside it) and GREEN's bullish
+//          condition must predate the fragment. See PURPLE section below.
 //
+// SRMA sideways-caution rules (gate BOTH BUY and REENTER):
+//   - SRMA is considered at all times (no time window).
+//   - HARD RULE: no BUY-side signal when candle close is at/below the
+//     SRMA line — applies even when SRMA is green.
+//   - SRMA red          → suppressed.
+//   - SRMA red → grey   → 20-candle caution window opens. While grey inside
+//                         the window, BUY/REENTER suppressed. Green SRMA
+//                         ends the caution early (allowed again). Red resets.
+//   - GREEN SELL during grey → same 20-candle caution window opens.
+//   - Window expired still grey → buy-side signals allowed only if the
+//                         candle close is above the SRMA line.
+//
+// BLUE held trigger (deferred BUY):
+//   - BLUE flips bullish while GREEN is ALREADY bullish (i.e. GREEN bullish
+//     but its BUY did not / could not fire) → a BUY trigger is held armed
+//     for the next 15 candles.
+//   - While armed, the held trigger fires → BUY on a green candle
+//     (close>open) closing above the highest close of the previous 20
+//     candles, when SRMA is green — OR, without needing the green tone,
+//     when the whole candle (wick included, low > SRMA) is above the
+//     SRMA line. Expires unfired after 15 candles;
+//     cancelled on a GREEN or BLUE bearish flip.
+//   - GREY FRAGMENT extra: during SRMA grey the fire additionally needs
+//     no BLUE bearish flip within the previous 10 candles.
+// BUY (PURPLE): PURPLE flips bullish → BUY only when ALL hold:
+//          (1) SRMA is green,
+//          (2) close is higher than the previous 3 candles' closes,
+//          (3) the whole candle — wick included (low > SRMA) — is above
+//              the SRMA line, no touching,
+//          (4) no GREEN or BLUE BUY has fired during this green SRMA
+//              fragment,
+//          (5) PURPLE has not already fired during this green fragment,
+//          (6) GREEN is already bullish — carried in from BEFORE the
+//              fragment (bullish at the fragment's first bar, i.e. its
+//              flip happened in the non-green zone; a fresh GREEN flip
+//              inside the green doesn't qualify).
+//          Fires at most once per continuous green-SRMA fragment.
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -70,6 +114,18 @@ function emaSeries(src, period) {
   return out;
 }
 
+// ── WMA (Weighted Moving Average) ────────────────────────────────────────────
+function wmaSeries(src, period) {
+  const out = new Array(src.length).fill(null);
+  const denom = (period * (period + 1)) / 2;
+  for (let i = period - 1; i < src.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < period; j++) sum += src[i - j] * (period - j);
+    out[i] = sum / denom;
+  }
+  return out;
+}
+
 // ── Standard UT Bot (fixed key) ─────────────────────────────────────────────
 function utBotSeries(H, L, C, keyValue, atrPeriod) {
   const N = C.length;
@@ -103,212 +159,339 @@ function utBotSeries(H, L, C, keyValue, atrPeriod) {
   return { pos: posArr, trail: tsArr };
 }
 
+// ── Sentiment Range MA [ChartPrime] ──────────────────────────────────────────
+// Port of suralgo-frontend/lib/strategy-chart.ts calculateSentimentRangeMA.
+// Stateful MA that re-anchors to source whenever the smoothed candle
+// top/bottom escapes the ATR×multiplier bands, then smooths the anchor
+// step-series with WMA (or WMA∘SMA "double filter").
+
+function smaAt(arr, i, len) {
+  // SMA ending at index i over arr[i-len+1..i]; NaN if any value missing/non-finite
+  if (i < len - 1) return NaN;
+  let sum = 0;
+  for (let j = i - len + 1; j <= i; j++) {
+    const v = arr[j];
+    if (!Number.isFinite(v)) return NaN;
+    sum += v;
+  }
+  return sum / len;
+}
+
+function wmaAt(arr, i, len) {
+  // WMA ending at index i; most recent weight = len, oldest = 1
+  if (i < len - 1) return NaN;
+  const denom = (len * (len + 1)) / 2;
+  let sum = 0;
+  for (let j = 0; j < len; j++) {
+    const v = arr[i - j];
+    if (!Number.isFinite(v)) return NaN;
+    sum += v * (len - j);
+  }
+  return sum / denom;
+}
+
+function smoothSeries(src, len, doubleFilter) {
+  const out = new Array(src.length).fill(NaN);
+  if (doubleFilter) {
+    // ta.wma(ta.sma(src, len), len) — SMA first (tail-aligned), then WMA over it
+    const sma = new Array(src.length).fill(NaN);
+    for (let i = 0; i < src.length; i++) sma[i] = smaAt(src, i, len);
+    for (let i = 0; i < src.length; i++) out[i] = wmaAt(sma, i, len);
+  } else {
+    for (let i = 0; i < src.length; i++) out[i] = wmaAt(src, i, len);
+  }
+  return out;
+}
+
+// Returns { ma, top, bottom, tone } parallel arrays (null where not finite).
+// tone: "bull" | "bear" | "neutral" | null (MA Direction color style).
+function sentimentRangeMA(O, H, L, C, opts = {}) {
+  const outLen = Math.max(1, (opts.length ?? 20) + 1);
+  const doubleFilter = opts.doubleFilter ?? true;
+  const trigLen = Math.max(1, (opts.triggerSmoothing ?? 4) + 1);
+  const atrLen = Math.max(1, Math.floor(opts.atrLength ?? 200));
+  const mult = opts.multiplier ?? 6;
+  const wick = opts.rangeStyle === "wick";
+
+  const n = C.length;
+  const ma = new Array(n).fill(null);
+  const top = new Array(n).fill(null);
+  const bottom = new Array(n).fill(null);
+  const tone = new Array(n).fill(null);
+  if (n === 0 || !Number.isFinite(mult)) return { ma, top, bottom, tone };
+
+  const candleTop = new Array(n);
+  const candleBottom = new Array(n);
+  const smoothTop = new Array(n).fill(NaN);
+  const smoothBottom = new Array(n).fill(NaN);
+  const atr = new Array(n).fill(NaN);
+  const tr = new Array(n);
+
+  for (let i = 0; i < n; i++) {
+    const t = wick ? H[i] : Math.max(O[i], C[i]);
+    const b = wick ? L[i] : Math.min(O[i], C[i]);
+    candleTop[i] = t;
+    candleBottom[i] = b;
+    tr[i] = t - b;
+  }
+  for (let i = trigLen - 1; i < n; i++) {
+    smoothTop[i] = smaAt(candleTop, i, trigLen);
+    smoothBottom[i] = smaAt(candleBottom, i, trigLen);
+  }
+  for (let i = atrLen - 1; i < n; i++) atr[i] = smaAt(tr, i, atrLen);
+
+  // Stateful anchor pass — mirrors the Pine var-block:
+  // flag uses PREVIOUS bar's top/bottom/current_range; on flag, re-anchor.
+  const rawMa = new Array(n).fill(NaN);
+  const rawTop = new Array(n).fill(NaN);
+  const rawBottom = new Array(n).fill(NaN);
+  let curRange = NaN;
+  let topRange = NaN;
+  let bottomRange = NaN;
+
+  for (let i = 0; i < n; i++) {
+    const st = smoothTop[i];
+    const sb = smoothBottom[i];
+    const flag =
+      !Number.isFinite(curRange) ||
+      (Number.isFinite(st) && st > topRange) ||
+      (Number.isFinite(sb) && sb < bottomRange);
+    if (flag) {
+      const src = C[i];
+      rawMa[i] = src;
+      const a = atr[i];
+      curRange = Number.isFinite(a) ? a * mult : NaN;
+      topRange = Number.isFinite(curRange) ? src + curRange : NaN;
+      bottomRange = Number.isFinite(curRange) ? src - curRange : NaN;
+    } else {
+      rawMa[i] = i > 0 ? rawMa[i - 1] : NaN;
+    }
+    rawTop[i] = topRange;
+    rawBottom[i] = bottomRange;
+  }
+
+  const smMa = smoothSeries(rawMa, outLen, doubleFilter);
+  const smTop = smoothSeries(rawTop, outLen, doubleFilter);
+  const smBottom = smoothSeries(rawBottom, outLen, doubleFilter);
+
+  for (let i = 0; i < n; i++) {
+    if (!Number.isFinite(smMa[i]) || !Number.isFinite(smTop[i]) || !Number.isFinite(smBottom[i])) continue;
+    ma[i] = smMa[i];
+    top[i] = smTop[i];
+    bottom[i] = smBottom[i];
+    // MA Direction color style: compare against previous smoothed value
+    const prev = i > 0 ? smMa[i - 1] : NaN;
+    const prevV = Number.isFinite(prev) ? prev : 0;
+    const d = smMa[i] - prevV;
+    tone[i] = d > 0 ? "bull" : d < 0 ? "bear" : "neutral";
+  }
+
+  return { ma, top, bottom, tone };
+}
+
+// ── Heikin-Ashi transform — used ONLY for the SELL (GREEN bearish) trigger ──
+function heikinAshi(O, H, L, C) {
+  const n = C.length;
+  const haO = new Array(n), haH = new Array(n), haL = new Array(n), haC = new Array(n);
+  for (let i = 0; i < n; i++) {
+    haC[i] = (O[i] + H[i] + L[i] + C[i]) / 4;
+    haO[i] = i === 0 ? (O[i] + C[i]) / 2 : (haO[i - 1] + haC[i - 1]) / 2;
+    haH[i] = Math.max(H[i], haO[i], haC[i]);
+    haL[i] = Math.min(L[i], haO[i], haC[i]);
+  }
+  return { O: haO, H: haH, L: haL, C: haC };
+}
+
 // ── Main strategy ────────────────────────────────────────────────────────────
 
+// 10EMA rising lookback for REENTER (candles ago), same as DINKAN/TOMMAN
+const REENTER_EMA_LOOKBACK = 5;
+
 function utGptStrategy2(candles) {
-  if (!candles || candles.length < 100) {
-    return { signal: "WAIT", reason: "Not enough data (need 100+)" };
+  if (!candles || candles.length < 20) {
+    return { signal: "WAIT", reason: "Not enough data" };
   }
+  // Same window the chart uses (ChartDesktop: merged.slice(-700)) so the
+  // backend SRMA anchor path matches what you see on screen.
+  candles = candles.slice(-700);
 
-  // ── Convert to Heikin-Ashi ──
-  const ha = [];
-  for (let i = 0; i < candles.length; i++) {
-    const o = Number(candles[i].open);
-    const h = Number(candles[i].high);
-    const l = Number(candles[i].low);
-    const c = Number(candles[i].close);
-    const haClose = (o + h + l + c) / 4;
-    const haOpen  = i === 0 ? (o + c) / 2 : (ha[i - 1].open + ha[i - 1].close) / 2;
-    const haHigh  = Math.max(h, haOpen, haClose);
-    const haLow   = Math.min(l, haOpen, haClose);
-    ha.push({ open: haOpen, high: haHigh, low: haLow, close: haClose });
-  }
-
-  const H = ha.map(c => c.high);
-  const L = ha.map(c => c.low);
-  const C = ha.map(c => c.close);
+  const O = candles.map(c => Number(c.open));
+  const H = candles.map(c => Number(c.high));
+  const L = candles.map(c => Number(c.low));
+  const C = candles.map(c => Number(c.close));
   const N = C.length;
 
-  const green      = utBotSeries(H, L, C, 2, 10);   // GREEN      (Key=2, ATR=10)
-  const blue       = utBotSeries(H, L, C, 3, 10);   // BLUE       (Key=3, ATR=10)
-  const cyan       = utBotSeries(H, L, C, 2, 300);  // CYAN       (Key=2, ATR=300)
-  const purple     = utBotSeries(H, L, C, 1, 10);   // PURPLE     (Key=1, ATR=10)
-  const teal       = utBotSeries(H, L, C, 4, 10);   // TEAL       (Key=4, ATR=10)
-  const infraGreen = utBotSeries(H, L, C, 0.5, 10); // INFRAGREEN (Key=0.5, ATR=10)
+  const green = utBotSeries(H, L, C, 2, 10);        // GREEN (Key=2, ATR=10) — BUY side
+  const ha = heikinAshi(O, H, L, C);               // Heikin-Ashi candles
+  const greenHa = utBotSeries(ha.H, ha.L, ha.C, 2, 10); // HA-GREEN — SELL trigger only
+  const blue  = utBotSeries(H, L, C, 3, 10);        // BLUE  (Key=3, ATR=10) — deferred trigger
+  const purple = utBotSeries(H, L, C, 1, 10);       // PURPLE (Key=1, ATR=10) — once-per-green BUY
+  const infraGreen = utBotSeries(H, L, C, 0.8, 10); // INFRAGREEN (Key=0.8, ATR=10)
 
-  const ema10 = emaSeries(C, 10); // 10EMA on Heikin-Ashi close
-  const ema30 = emaSeries(C, 30); // 30EMA on Heikin-Ashi close
+  const ema10 = emaSeries(C, 10); // 10EMA on close
+  const ema30 = emaSeries(C, 30); // 30EMA on close
 
-  // Candle time in minutes (HH:MM) — used by CYAN cutoff, day-boundary and TEAL-after-10AM checks
-  const candleMinutes = candles.map(cd => {
-    const m = /(\d{1,2}):(\d{2})/.exec(String(cd && cd.time));
-    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
-  });
+  const wma30 = wmaSeries(C, 30); // WMA30 on close
+  const wma60 = wmaSeries(C, 60); // WMA60 on close
 
-  // CYAN BUY cutoff: only allowed before 10:30 AM (candle time)
-  const cyanBuyTimeOK = candleMinutes.map(mins => (mins == null ? true : mins < 10 * 60 + 30));
+  const srma = sentimentRangeMA(O, H, L, C); // SRMA, frontend defaults
 
-  // Auto re-entry gate config
-  const REENTER_PEAK_CANDLES = 30; // highest HA close over previous N candles (excl. current)
-  const REENTER_POINTS = 5;        // close must clear the peak by this many points
-  const REENTER_EMA_LOOKBACK = 5;  // EMA10 must exceed its value N candles ago
-
-  let lastSignal = "WAIT", lastReason = "No signal";
-  let trending = false;
-
-  // Pending PURPLE sell state
-  let pendingPurpleSell = { active: false, high: 0, low: 0 };
-
-  // Candle index of latest TEAL bullish flip (for the BLUE BUY block)
-  let lastTealFlipBuyIdx = -Infinity;
-
-  // Candle index where the current trading day starts (detected by time going backwards)
-  let dayStartIdx = 0;
+  // ── Bar-by-bar replay (SRMA caution state needs transition history) ──
+  const CAUTION_WINDOW = 20; // candles after red→grey / SELL-in-grey
+  let cautionLeft = 0;       // candles remaining inside the caution window
+  let postCautionGrey = false; // window expired while still grey → need close>SRMA
+  const BLUE_WINDOW = 15;    // candles BLUE's BUY trigger stays armed
+  const BLUE_ENABLED = true; // BLUE deferred BUY trigger
+  let blueTrigger = 0;       // candles remaining on BLUE's held BUY trigger
+  let lastBlueBear = -Infinity; // bar index of last BLUE bearish flip (grey-fragment embargo)
+  let inGreenFragment = false; // currently inside a continuous SRMA-green stretch
+  let purpleUsed = false;      // PURPLE already fired this green fragment
+  let greenBlueBuyUsed = false; // GREEN/BLUE BUY already fired this green fragment
+  let greenBullAtFragStart = false; // GREEN was already bullish when this green fragment began
+  let signal = "WAIT";
+  let reason = "No flip";
 
   for (let i = 1; i < N; i++) {
-    const blueBull       = blue.pos[i] === 1;
-    const greenBull      = green.pos[i] === 1;
-    const cyanBull        = cyan.pos[i] === 1;
-    const purpleBull      = purple.pos[i] === 1;
-    const tealBull        = teal.pos[i] === 1;
-    const infraGreenBull  = infraGreen.pos[i] === 1;
+    signal = "WAIT";
+    reason = "No flip";
 
-    const blueFlipBuy        = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
-    const greenFlipBuy       = green.pos[i] === 1 && green.pos[i - 1] !== 1;
-    const cyanFlipBuy        = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
-    const tealFlipBuy        = teal.pos[i] === 1 && teal.pos[i - 1] !== 1;
+    const tone = srma.tone[i];
+    const prevTone = srma.tone[i - 1];
 
-    const blueFlipSell  = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
-    const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
-    const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
-
-    const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
-    const purpleFlipSell = purple.pos[i] === -1 && purple.pos[i - 1] !== -1;
-
-    // EMA values for this candle
-    const e10 = ema10[i];
-    const e30 = ema30[i];
-    const emaCrossedUp = e10 != null && e30 != null && e10 > e30;
-    const haLowVsEma30 = e30 != null ? L[i] >= e30 : false; // strict: HA low must be at or above 30EMA
-    const touchesEma30  = e30 != null ? L[i] <= e30 : false; // candle touches or crosses below 30EMA
-
-    // Auto re-entry gates: peak break (excl. current candle) + EMA10 rising
-    const reEntryPeak = i > REENTER_PEAK_CANDLES ? Math.max(...C.slice(i - REENTER_PEAK_CANDLES, i)) : null;
-    const priceBreaksPeak = reEntryPeak != null && C[i] > reEntryPeak + REENTER_POINTS;
-    const ema10Rising = e10 != null && ema10[i - REENTER_EMA_LOOKBACK] != null && e10 > ema10[i - REENTER_EMA_LOOKBACK];
-
-    // TRENDING: true when all 5 UT Bots are bullish on this candle
-    trending = blueBull && greenBull && cyanBull && purpleBull && tealBull;
-
-    // New trading day starts when candle time goes backwards (e.g. 15:30 → 09:15)
-    if (candleMinutes[i] != null && candleMinutes[i - 1] != null && candleMinutes[i] < candleMinutes[i - 1]) {
-      dayStartIdx = i;
+    // ── PURPLE once-per-green-fragment bookkeeping ──
+    if (tone === "bull") {
+      if (!inGreenFragment) {
+        inGreenFragment = true; purpleUsed = false; greenBlueBuyUsed = false;
+        greenBullAtFragStart = green.pos[i] === 1; // GREEN carried in bullish from the non-green zone
+      }
+    } else {
+      inGreenFragment = false;
     }
-    if (tealFlipBuy) lastTealFlipBuyIdx = i;
 
-    // TEAL blocks BLUE BUY only if its last bullish flip happened TODAY at/after 10:00.
-    // TEAL carried over from yesterday, or flipped before 10:00, does NOT block.
-    // Unparseable flip time is treated as counting (blocks).
-    const tealFlipMin = lastTealFlipBuyIdx >= 0 ? candleMinutes[lastTealFlipBuyIdx] : null;
-    const tealBlocksBlue = teal.pos[i - 1] === 1
-      && lastTealFlipBuyIdx >= dayStartIdx
-      && (tealFlipMin == null || tealFlipMin >= 10 * 60);
+    // ── SRMA sideways-caution state ──
+    if (prevTone === "bear" && tone === "neutral") { cautionLeft = CAUTION_WINDOW; postCautionGrey = false; }
+    if (tone === "bull" || tone === "bear") { cautionLeft = 0; postCautionGrey = false; }
 
-    let sig = "WAIT", reason = "No signal";
-
-    // ── SELL: CYAN or GREEN or BLUE flips bearish (immediate) ──
-    if (cyanFlipSell || greenFlipSell || blueFlipSell) {
-      sig = "SELL";
-      const flips = [];
-      if (cyanFlipSell) flips.push("CYAN");
-      if (greenFlipSell) flips.push("GREEN");
-      if (blueFlipSell) flips.push("BLUE");
-      reason = flips.join(" & ") + " flip bearish";
-      pendingPurpleSell = { active: false, high: 0, low: 0 }; // clear pending
+    // buy-side gate from SRMA
+    let srmaBlockReason = null;
+    if (srma.ma[i] != null && C[i] <= srma.ma[i]) {
+      srmaBlockReason = "candle close at/below SRMA";
+    } else if (tone === "bear") {
+      srmaBlockReason = "SRMA is red";
+    } else if (tone === "neutral") {
+      if (cautionLeft > 0) srmaBlockReason = "SRMA grey, inside 20-candle caution";
+      else if (postCautionGrey && !(srma.ma[i] != null && C[i] > srma.ma[i]))
+        srmaBlockReason = "SRMA grey past caution, close not above SRMA";
     }
-    // ── SELL: PURPLE flips bearish (conditional on 30EMA) ──
-    // Note: PURPLE bullish flip cancels pending BEFORE this block (checked below)
-    else if (purpleFlipSell && !purpleFlipBuy) {
-      if (touchesEma30) {
-        sig = "SELL";
-        reason = "PURPLE flip bearish, candle touches 30EMA";
-        pendingPurpleSell = { active: false, high: 0, low: 0 };
+
+    const bullFlip = green.pos[i] === 1 && green.pos[i - 1] !== 1;
+    const bearFlip = greenHa.pos[i] === -1 && greenHa.pos[i - 1] !== -1; // HA candles → later SELL, holds trend
+    const blueBullFlip = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
+    const blueBearFlip = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
+
+    // ── BLUE trigger arming: bullish flip while GREEN ALREADY bullish ──
+    if (BLUE_ENABLED && blueBullFlip && green.pos[i] === 1 && green.pos[i - 1] === 1) blueTrigger = BLUE_WINDOW;
+    if (blueBearFlip) { blueTrigger = 0; lastBlueBear = i; } // BLUE going bearish kills its held trigger + stamps embargo
+
+    if (bearFlip) {
+      signal = "SELL";
+      reason = "GREEN flipped bearish";
+      blueTrigger = 0;
+      // SELL during grey arms the same 20-candle caution
+      if (tone === "neutral") { cautionLeft = CAUTION_WINDOW; postCautionGrey = false; }
+    } else if (bullFlip) {
+      if (srmaBlockReason) {
+        reason = `GREEN flipped bullish but ${srmaBlockReason} — BUY suppressed`;
       } else {
-        // Not touching 30EMA → store pending, wait for confirmation
-        pendingPurpleSell = { active: true, high: H[i], low: L[i] };
+        signal = "BUY";
+        reason = "GREEN flipped bullish";
+      }
+    } else {
+      // ── REENTER gates ──
+      const infraGreenFlipBuy = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
+      const emaCrossedUp = ema10[i] != null && ema30[i] != null && ema10[i] > ema30[i];
+      const ema10Rising = i >= REENTER_EMA_LOOKBACK
+        && ema10[i] != null && ema10[i - REENTER_EMA_LOOKBACK] != null
+        && ema10[i] > ema10[i - REENTER_EMA_LOOKBACK];
+      const wmaCrossedUp = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
+
+      if (green.pos[i] === 1 && infraGreenFlipBuy && emaCrossedUp && ema10Rising && wmaCrossedUp) {
+        if (srmaBlockReason) {
+          reason = `INFRAGREEN flip bullish but ${srmaBlockReason} — REENTER suppressed`;
+        } else {
+          signal = "REENTER";
+          reason = "INFRAGREEN flip bullish (K0.8/ATR10) while GREEN bullish, 10EMA>30EMA rising, WMA30>WMA60";
+        }
       }
     }
-    // ── Pending PURPLE SELL confirmation ──
-    // Only checked if PURPLE did NOT flip bullish this candle
-    else if (pendingPurpleSell.active && !purpleFlipBuy) {
-      if (touchesEma30) {
-        sig = "SELL";
-        reason = "Pending PURPLE sell confirmed: candle touches 30EMA";
-        pendingPurpleSell = { active: false, high: 0, low: 0 };
-      } else if (H[i] < pendingPurpleSell.high && L[i] < pendingPurpleSell.low) {
-        sig = "SELL";
-        reason = "Pending PURPLE sell confirmed: lower high & lower low than PURPLE sell candle";
-        pendingPurpleSell = { active: false, high: 0, low: 0 };
+
+    // ── BLUE held trigger: SRMA green/body-above + green candle + 20-candle close breakout ──
+    if (signal === "WAIT" && blueTrigger > 0) {
+      let highestClose20 = -Infinity;
+      for (let j = Math.max(0, i - 20); j < i; j++) if (C[j] > highestClose20) highestClose20 = C[j];
+      const candleAboveSrma = srma.ma[i] != null && L[i] > srma.ma[i]; // whole candle incl. wick above SRMA
+      const srmaOkForFire = tone === "bull" || candleAboveSrma;
+      const closeAboveSrma = srma.ma[i] == null || C[i] > srma.ma[i];
+      const blueBearClear = tone !== "neutral" || i - lastBlueBear > 10; // grey-fragment embargo
+      if (srmaOkForFire && closeAboveSrma && blueBearClear && C[i] > O[i] && C[i] > highestClose20) {
+        signal = "BUY";
+        reason = tone === "bull"
+          ? "BLUE trigger fired: bullish flip while GREEN bullish → SRMA green + green candle closing above 20-candle closes → BUY"
+          : "BLUE trigger fired: bullish flip while GREEN bullish → candle fully above SRMA + closing above 20-candle closes → BUY";
+        blueTrigger = 0;
+      } else {
+        blueTrigger -= 1;
       }
     }
 
-    // ── BUY: BLUE flips bullish ──
-    // Blocked if TEAL was already bullish via a flip TODAY at/after 10:00.
-    // Same-candle TEAL flip, or TEAL flipped yesterday/before 10:00, does NOT block.
-    if (sig === "WAIT" && blueFlipBuy && !tealBlocksBlue) {
-      sig = "BUY";
-      reason = "BLUE flip bullish (K3/ATR10)";
-    }
-    // ── BUY: BLUE already bullish, GREEN flips bullish ──
-    else if (sig === "WAIT" && blueBull && greenFlipBuy) {
-      sig = "BUY";
-      reason = "GREEN flip bullish (K2/ATR10) while BLUE bullish";
-    }
-    // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish (only before 10:30 AM, 10EMA>30EMA) ──
-    else if (sig === "WAIT" && blueBull && greenBull && cyanFlipBuy && cyanBuyTimeOK[i] && emaCrossedUp) {
-      sig = "BUY";
-      reason = "CYAN flip bullish (K2/ATR300) while BLUE & GREEN bullish, 10EMA>30EMA";
-    }
-    // ── BUY: TEAL flips bullish ──
-    else if (sig === "WAIT" && tealFlipBuy) {
-      sig = "BUY";
-      reason = "TEAL flip bullish (K4/ATR10)";
-    }
-    // ── REENTER: INFRAGREEN bullish + peak break + EMA10>30 & rising ──
-    else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenBull
-      && priceBreaksPeak && emaCrossedUp && ema10Rising) {
-      sig = "REENTER";
-      reason = `Auto re-entry: close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}, EMA10>30 & rising, INFRAGREEN bullish`;
+    // a GREEN/BLUE BUY fired during a green fragment consumes PURPLE's slot
+    if (signal === "BUY" && tone === "bull") greenBlueBuyUsed = true;
+
+    // ── PURPLE: once-per-green-fragment BUY ──
+    if (signal === "WAIT" && tone === "bull" && green.pos[i] === 1 && greenBullAtFragStart && !purpleUsed && !greenBlueBuyUsed) {
+      const purpleBullFlip = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
+      let highestClose3 = -Infinity;
+      for (let j = Math.max(0, i - 3); j < i; j++) if (C[j] > highestClose3) highestClose3 = C[j];
+      if (purpleBullFlip && C[i] > highestClose3 && srma.ma[i] != null && L[i] > srma.ma[i]) {
+        signal = "BUY";
+        reason = "PURPLE flipped bullish, SRMA green, close above prev 3 candles, candle fully above SRMA → BUY";
+        purpleUsed = true;
+      }
     }
 
-    // Clear pending PURPLE sell if any BUY/REENTER signal fired, or PURPLE flipped bullish
-    if (sig === "BUY" || sig === "REENTER" || purpleFlipBuy) {
-      pendingPurpleSell = { active: false, high: 0, low: 0 };
+    // end of bar: tick the caution window down
+    if (cautionLeft > 0) {
+      cautionLeft -= 1;
+      if (cautionLeft === 0 && tone === "neutral") postCautionGrey = true;
     }
-
-    lastSignal = sig;
-    lastReason = reason;
   }
 
+  const i = N - 1;
+
   return {
-    signal: lastSignal,
-    reason: lastReason,
-    trending,
-    greenPos: green.pos[N - 1],
-    bluePos: blue.pos[N - 1],
-    cyanPos: cyan.pos[N - 1],
-    purplePos: purple.pos[N - 1],
-    tealPos: teal.pos[N - 1],
-    infraGreenPos: infraGreen.pos[N - 1],
-    greenTrail: green.trail[N - 1],
-    blueTrail: blue.trail[N - 1],
-    cyanTrail: cyan.trail[N - 1],
-    purpleTrail: purple.trail[N - 1],
-    tealTrail: teal.trail[N - 1],
-    infraGreenTrail: infraGreen.trail[N - 1],
-    ema10: ema10[N - 1],
-    ema30: ema30[N - 1],
-    close: C[N - 1]
+    signal,
+    reason,
+    srmaCaution: cautionLeft,
+    srmaPostCautionGrey: postCautionGrey,
+    greenPos: green.pos[i],
+    greenTrail: green.trail[i],
+    greenHaPos: greenHa.pos[i],
+    greenHaTrail: greenHa.trail[i],
+    bluePos: blue.pos[i],
+    blueTrail: blue.trail[i],
+    blueTrigger,
+    purplePos: purple.pos[i],
+    purpleTrail: purple.trail[i],
+    infraGreenPos: infraGreen.pos[i],
+    ema10: ema10[i],
+    ema30: ema30[i],
+    wma30: wma30[i],
+    wma60: wma60[i],
+    srma: srma.ma[i],
+    srmaTop: srma.top[i],
+    srmaBottom: srma.bottom[i],
+    srmaTone: srma.tone[i],
+    close: C[i]
   };
 }
 
