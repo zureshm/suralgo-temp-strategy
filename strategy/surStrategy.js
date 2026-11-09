@@ -26,19 +26,20 @@
 //          suppressed when SRMA is red, inside the 20-candle caution
 //          window after red→grey or a SELL-in-grey, and during post-
 //          caution grey unless the close is above the SRMA line.
-//          Outside 09:45–15:00 all SRMA checks are skipped → always BUY.
 // BUY (BLUE): BLUE flips bullish while GREEN already bullish → holds a BUY
 //          trigger for the next 15 candles; fires on a green candle
 //          (close>open) closing above the highest close of the previous
 //          20 candles AND either: (a) SRMA is green, OR (b) the entire
 //          candle — wick included (low > SRMA) — sits above the SRMA
 //          line, which needs no green tone. See BLUE section below.
+// BUY (PURPLE): PURPLE flips bullish while GREEN already bullish AND
+//          SRMA green → BUY when close beats the previous 3 closes and
+//          the whole candle (wick included) is above SRMA; at most once
+//          per green SRMA fragment, and never after a GREEN/BLUE BUY in
+//          the same fragment. See PURPLE section below.
 //
 // SRMA sideways-caution rules (gate BOTH BUY and REENTER):
-//   - SRMA is considered ONLY between 09:45 and 15:00 (candle time).
-//     Outside that window all SRMA checks are skipped — BUY/REENTER are
-//     never suppressed, BLUE's fire needs no green tone — EXCEPT PURPLE,
-//     which always requires SRMA green (ignores the window).
+//   - SRMA is considered at all times (no time window).
 //   - HARD RULE: no BUY-side signal when candle close is at/below the
 //     SRMA line — applies even when SRMA is green.
 //   - SRMA red          → suppressed.
@@ -62,7 +63,7 @@
 //   - GREY FRAGMENT extra: during SRMA grey the fire additionally needs
 //     no BLUE bearish flip within the previous 10 candles.
 // BUY (PURPLE): PURPLE flips bullish → BUY only when ALL hold:
-//          (1) SRMA is green — NOT time-windowed (may fire pre-9:45),
+//          (1) SRMA is green,
 //          (2) close is higher than the previous 3 candles' closes,
 //          (3) the whole candle — wick included (low > SRMA) — is above
 //              the SRMA line, no touching,
@@ -288,15 +289,6 @@ function sentimentRangeMA(O, H, L, C, opts = {}) {
 // 10EMA rising lookback for REENTER (candles ago), same as DINKAN/TOMMAN
 const REENTER_EMA_LOOKBACK = 5;
 
-// SRMA rules apply only within 09:45–15:00 candle time
-function srmaWindowActive(candleTime) {
-  if (candleTime == null) return true; // no time info → apply SRMA
-  const m = String(candleTime).match(/(\d{2}):(\d{2})/);
-  if (!m) return true;
-  const mins = (+m[1]) * 60 + (+m[2]);
-  return mins >= 9 * 60 + 45 && mins < 15 * 60;
-}
-
 function surStrategy(candles) {
   if (!candles || candles.length < 20) {
     return { signal: "WAIT", reason: "Not enough data" };
@@ -353,19 +345,16 @@ function surStrategy(candles) {
     if (prevTone === "bear" && tone === "neutral") { cautionLeft = CAUTION_WINDOW; postCautionGrey = false; }
     if (tone === "bull" || tone === "bear") { cautionLeft = 0; postCautionGrey = false; }
 
-    // buy-side gate from SRMA (only inside the 09:45–15:00 window)
-    const srmaActive = srmaWindowActive(candles[i].time);
+    // buy-side gate from SRMA
     let srmaBlockReason = null;
-    if (srmaActive) {
-      if (srma.ma[i] != null && C[i] <= srma.ma[i]) {
-        srmaBlockReason = "candle close at/below SRMA";
-      } else if (tone === "bear") {
-        srmaBlockReason = "SRMA is red";
-      } else if (tone === "neutral") {
-        if (cautionLeft > 0) srmaBlockReason = "SRMA grey, inside 20-candle caution";
-        else if (postCautionGrey && !(srma.ma[i] != null && C[i] > srma.ma[i]))
-          srmaBlockReason = "SRMA grey past caution, close not above SRMA";
-      }
+    if (srma.ma[i] != null && C[i] <= srma.ma[i]) {
+      srmaBlockReason = "candle close at/below SRMA";
+    } else if (tone === "bear") {
+      srmaBlockReason = "SRMA is red";
+    } else if (tone === "neutral") {
+      if (cautionLeft > 0) srmaBlockReason = "SRMA grey, inside 20-candle caution";
+      else if (postCautionGrey && !(srma.ma[i] != null && C[i] > srma.ma[i]))
+        srmaBlockReason = "SRMA grey past caution, close not above SRMA";
     }
 
     const bullFlip = green.pos[i] === 1 && green.pos[i - 1] !== 1;
@@ -414,8 +403,8 @@ function surStrategy(candles) {
       let highestClose20 = -Infinity;
       for (let j = Math.max(0, i - 20); j < i; j++) if (C[j] > highestClose20) highestClose20 = C[j];
       const candleAboveSrma = srma.ma[i] != null && L[i] > srma.ma[i]; // whole candle incl. wick above SRMA
-      const srmaOkForFire = !srmaActive || tone === "bull" || candleAboveSrma;
-      const closeAboveSrma = !srmaActive || srma.ma[i] == null || C[i] > srma.ma[i];
+      const srmaOkForFire = tone === "bull" || candleAboveSrma;
+      const closeAboveSrma = srma.ma[i] == null || C[i] > srma.ma[i];
       const blueBearClear = tone !== "neutral" || i - lastBlueBear > 10; // grey-fragment embargo
       if (srmaOkForFire && closeAboveSrma && blueBearClear && C[i] > O[i] && C[i] > highestClose20) {
         signal = "BUY";
