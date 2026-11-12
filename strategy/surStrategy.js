@@ -22,22 +22,38 @@
 //          AND 10EMA already above 30EMA (upward cross has occurred),
 //          AND 10EMA rising vs 5 candles ago,
 //          AND WMA30 above WMA60 (already crossed upwards).
-// BUY:     GREEN flips bullish — subject to the SRMA gate below:
-//          suppressed when SRMA is red, inside the 20-candle caution
-//          window after red→grey or a SELL-in-grey, and during post-
-//          caution grey unless the close is above the SRMA line.
-// BUY (BLUE): BLUE flips bullish while GREEN already bullish → holds a BUY
-//          trigger for the next 15 candles; fires on a green candle
-//          (close>open) closing above the highest close of the previous
-//          20 candles AND either: (a) SRMA is green, OR (b) the entire
-//          candle — wick included (low > SRMA) — sits above the SRMA
-//          line, which needs no green tone. See BLUE section below.
-// BUY (PURPLE): PURPLE flips bullish while GREEN already bullish AND
-//          SRMA green → BUY when close beats the previous 3 closes and
-//          the whole candle (wick included) is above SRMA; at most once
-//          per green SRMA fragment — PURPLE is the FIRST signal of the
-//          fragment (no GREEN/BLUE BUY inside it) and GREEN's bullish
-//          condition must predate the fragment. See PURPLE section below.
+// BUY (GREEN): BUY only when ALL hold:
+//          (1) GREEN flips bullish on this bar,
+//          (2) close is above the SRMA line (hard rule),
+//          (3) SRMA tone is not red,
+//          (4) not inside the 20-candle caution window (armed by a
+//              red→grey transition or a SELL-in-grey),
+//          (5) if still grey after the caution window — close must be
+//              above the SRMA line.
+// BUY (BLUE): arms a held BUY trigger (15 candles) when ALL hold:
+//          (1) BLUE flips bullish on this bar,
+//          (2) GREEN is already bullish — pos=1 on this bar AND the
+//              previous one (its flip came earlier).
+//          The armed trigger then fires → BUY on a later bar when ALL hold:
+//          (3) green candle (close > open),
+//          (4) close above the highest close of the previous 20 candles,
+//          (5) close above the SRMA line (hard rule),
+//          (6) SRMA is green — OR the whole candle, wick included
+//              (low > SRMA), sits above the SRMA line,
+//          (7) in a grey fragment — no BLUE bearish flip in the last
+//              10 candles.
+//          Cancelled on a BLUE or GREEN bearish flip.
+// BUY (PURPLE): PURPLE flips bullish → BUY only when ALL hold:
+//          (1) SRMA is green,
+//          (2) close beats the previous 3 candles' closes,
+//          (3) the whole candle — wick included (low > SRMA) — is above
+//              the SRMA line,
+//          (4) no GREEN or BLUE BUY has fired in this green fragment,
+//          (5) PURPLE has not already fired in this green fragment,
+//          (6) GREEN is already bullish at the fire bar AND was bullish
+//              at the fragment's first bar — its bullish streak carried
+//              in from the non-green zone.
+//          Fires at most once per continuous green-SRMA fragment.
 //
 // SRMA sideways-caution rules (gate BOTH BUY and REENTER):
 //   - SRMA is considered at all times (no time window).
@@ -293,13 +309,13 @@ function sentimentRangeMA(O, H, L, C, opts = {}) {
 // 10EMA rising lookback for REENTER (candles ago), same as DINKAN/TOMMAN
 const REENTER_EMA_LOOKBACK = 5;
 
+const FRONTEND_CANDLE_WINDOW = 700; // frontend charts keep merged.slice(-700)
+
 function surStrategy(candles) {
   if (!candles || candles.length < 20) {
     return { signal: "WAIT", reason: "Not enough data" };
   }
-  // Same window the chart uses (ChartDesktop: merged.slice(-700)) so the
-  // backend SRMA anchor path matches what you see on screen.
-  candles = candles.slice(-700);
+  candles = candles.slice(-FRONTEND_CANDLE_WINDOW);
 
   const O = candles.map(c => Number(c.open));
   const H = candles.map(c => Number(c.high));
