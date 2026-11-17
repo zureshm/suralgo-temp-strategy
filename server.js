@@ -13,7 +13,7 @@ const { superDoubleUT :HEIKIN_SUPER_DOUBLE_UT } = require("./strategy/superDoubl
 const { sumeshStrategy :SUMESH_STRATEGY } = require("./strategy/SumeshStrategy");
 const { utGptStrategy : HEIKIN_SUMESH_RE } = require("./strategy/UTGPTStrategy");
 const { utGptStrategy1 : HEIKIN_SMARTBUGGY_RE} = require("./strategy/UTGPTStrategy1");
-const { utGptStrategy2 : HEIKIN_SURESH_MIX} = require("./strategy/UTGPTStrategy2");
+const { utGptStrategy2 : OLD_TERROR_MIX} = require("./strategy/UTGPTStrategy2");
 const { utGptStrategy3 : HEIKIN_SMARTTHOMMAN_RE} = require("./strategy/UTGPTStrategy3");
 const { utGptStrategy4: HEIKIN_DINKAN_RE } = require("./strategy/UTGPTStrategy4");
 const { utGptStrategy4X :HEIKIN_CAREFUL_RE } = require("./strategy/UTGPTStrategy4X");
@@ -84,7 +84,7 @@ const strategies = {
   SUMESH_STRATEGY,
   HEIKIN_CAREFUL_RE,
   HEIKIN_DINKAN_RE,
-  HEIKIN_SURESH_MIX,
+  OLD_TERROR_MIX,
   HEIKIN_SMARTBUGGY_RE,
   HEIKIN_DEBUGGED_RE,
   HEIKIN_TOMMAN_RE,
@@ -413,6 +413,26 @@ app.get("/strategy", (req, res) => {
     activeStrategy,
     availableStrategies: Object.keys(strategies)
   });
+});
+
+// Clear one symbol's state (called by angel-feed when a symbol is removed)
+// Without this, a removed symbol's last eval stays frozen in memory forever —
+// the sticky-signal expiry needs new candles, so a stored BUY/SELL/REENTER
+// would be served again on re-add (stale signal → accidental trigger).
+app.post("/remove-symbol", (req, res) => {
+  const { symbol } = req.body;
+
+  if (!symbol) {
+    return res.status(400).json({ message: "symbol is required" });
+  }
+
+  delete candleHistoryBySymbol[symbol];
+  delete latestEvaluationBySymbol[symbol];
+  delete historyLoadedBySymbol[symbol];
+
+  console.log("Symbol state cleared:", symbol);
+
+  res.json({ message: "symbol state cleared", symbol });
 });
 
 app.post("/reset-engine", (req, res) => {
