@@ -12,8 +12,8 @@
 //   - VWAP on normal candles (typical price, resets daily)
 //   - Candles are converted to Heikin-Ashi for INFRAGREEN + EMA/WMA gates
 //
-// BUY (CYAN): CYAN (UT Bot, Key=2, ATR=200, normal candles) flips bullish,
-//          only for candles between 9:15 and 10:00.
+// BUY (CYAN): CYAN (UT Bot, Key=2, ATR=200, HA candles) flips bullish,
+//          only for candles between 9:15 and 10:00, AND only while 10EMA > 30EMA (HA).
 // BUY:     GREEN flips bullish (on normal candles).
 // SELL:    GREEN flips bearish.
 // REENTER: GREEN already bullish AND INFRAGREEN flips bullish,
@@ -173,7 +173,7 @@ function utGptStrategy2(candles) {
   const green = utBotSeries(nH, nL, nC, 2, 10);     // GREEN on normal candles (Key=2, ATR=10)
   const infraGreen = utBotSeries(H, L, C, 0.8, 10); // INFRAGREEN on HA (Key=0.8, ATR=10)
 
-  const cyan = utBotSeries(nH, nL, nC, 2, 200);     // CYAN on normal candles (Key=2, ATR=200)
+  const cyan = utBotSeries(H, L, C, 2, 200);       // CYAN on HA (Key=2, ATR=200)
 
   const ema10 = emaSeries(C, 10); // 10EMA on HA close
   const ema30 = emaSeries(C, 30); // 30EMA on HA close
@@ -193,9 +193,9 @@ function utGptStrategy2(candles) {
   } else if (green.pos[i] === -1 && green.pos[i - 1] !== -1) {
     signal = "SELL";
     reason = "GREEN flipped bearish (normal candles)";
-  } else if (cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1 && inCyanWindow(candles[i].time)) {
+  } else if (cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1 && inCyanWindow(candles[i].time) && ema10[i] != null && ema30[i] != null && ema10[i] > ema30[i]) {
     signal = "BUY";
-    reason = "CYAN flipped bullish (K2/ATR200, normal candles) within 9:15-10:00";
+    reason = "CYAN flipped bullish (K2/ATR200, Heikin-Ashi) within 9:15-10:00 while 10EMA>30EMA";
   } else {
     // ── REENTER gates ──
     const infraGreenFlipBuy = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;

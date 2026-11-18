@@ -1,7 +1,7 @@
 // =============================================================================
 // VWAPUTBotStrategy — Sumesh UT Bot on Heikin-Ashi candles
 //
-// Same signal engine as SumeshStrategy. GREEN, CYAN, INFRAGREEN and all
+// Same signal engine as SumeshStrategy. GREEN, INFRAGREEN and all
 // EMA/WMA gates are computed on Heikin-Ashi candles (VWAP/price gate use normal).
 //
 // INDICATORS & CONFIGURATION:
@@ -12,8 +12,6 @@
 //   - VWAP on normal candles (typical price, resets daily)
 //   - Candles are converted to Heikin-Ashi for INFRAGREEN + EMA/WMA gates
 //
-// BUY (CYAN): CYAN (UT Bot, Key=2, ATR=200, HA candles) flips bullish,
-//          only for candles between 9:15 and 10:00.
 // BUY:     GREEN flips bullish (on HA candles).
 // SELL:    GREEN flips bearish (on HA candles).
 // REENTER: GREEN already bullish AND INFRAGREEN flips bullish,
@@ -128,13 +126,6 @@ function vwapSeries(candles) {
   return out;
 }
 
-// CYAN BUY is only allowed for candles stamped 09:15 through 10:00 (inclusive)
-function inCyanWindow(time) {
-  const m = /[ T](\d{2}):(\d{2})/.exec(String(time));
-  if (!m) return false;
-  const mins = Number(m[1]) * 60 + Number(m[2]);
-  return mins >= 9 * 60 + 15 && mins <= 10 * 60;
-}
 
 // ── Main strategy ────────────────────────────────────────────────────────────
 
@@ -165,13 +156,12 @@ function VWAPUTBotStrategy(candles) {
   const C = ha.map(c => c.close);
   const N = C.length;
 
-  // GREEN, CYAN and INFRAGREEN all on Heikin-Ashi; nC kept for the VWAP price gate
+  // GREEN and INFRAGREEN on Heikin-Ashi; nC kept for the VWAP price gate
   const nC = candles.map(c => Number(c.close));
 
   const green = utBotSeries(H, L, C, 2, 10);        // GREEN on HA (Key=2, ATR=10)
   const infraGreen = utBotSeries(H, L, C, 0.8, 10); // INFRAGREEN on HA (Key=0.8, ATR=10)
 
-  const cyan = utBotSeries(H, L, C, 2, 200);       // CYAN on HA (Key=2, ATR=200)
 
   const ema10 = emaSeries(C, 10); // 10EMA on HA close
   const ema30 = emaSeries(C, 30); // 30EMA on HA close
@@ -191,9 +181,6 @@ function VWAPUTBotStrategy(candles) {
   } else if (green.pos[i] === -1 && green.pos[i - 1] !== -1) {
     signal = "SELL";
     reason = "GREEN flipped bearish (Heikin-Ashi)";
-  } else if (cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1 && inCyanWindow(candles[i].time)) {
-    signal = "BUY";
-    reason = "CYAN flipped bullish (K2/ATR200, Heikin-Ashi) within 9:15-10:00";
   } else {
     // ── REENTER gates ──
     const infraGreenFlipBuy = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
@@ -224,8 +211,6 @@ function VWAPUTBotStrategy(candles) {
     reason,
     greenPos: green.pos[i],
     greenTrail: green.trail[i],
-    cyanPos: cyan.pos[i],
-    cyanTrail: cyan.trail[i],
     infraGreenPos: infraGreen.pos[i],
     infraGreenTrail: infraGreen.trail[i],
     vwap: vwap[i],
