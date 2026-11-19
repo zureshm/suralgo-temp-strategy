@@ -6,6 +6,7 @@
 //
 // INDICATORS & CONFIGURATION:
 //   - GREEN (UT Bot 1): Key Value = 2, ATR Period = 10 (on NORMAL candles)
+//   - PALEGREEN (UT Bot): Key Value = 1.5, ATR Period = 10 (on NORMAL candles)
 //   - INFRAGREEN (UT Bot 2): Key Value = 0.8, ATR Period = 10 (on HA candles)
 //   - 10EMA / 30EMA on HA close
 //   - WMA30 / WMA60 on HA close
@@ -16,6 +17,9 @@
 //          only for candles between 9:15 and 10:00, AND only while 10EMA > 30EMA (HA).
 // BUY:     GREEN flips bullish (on normal candles).
 // SELL:    GREEN flips bearish.
+// BUY (PALEGREEN): PALEGREEN bullish flip with price above VWAP,
+//          10EMA>30EMA, 10EMA rising vs 3 candles ago, WMA30>WMA60,
+//          WMA30 below 10EMA, candle fully above WMA30 (neither wick nor body touching it).
 // REENTER: GREEN already bullish AND INFRAGREEN flips bullish,
 //          AND price (normal close) above VWAP,
 //          AND 10EMA already above 30EMA (upward cross has occurred),
@@ -140,6 +144,7 @@ function inCyanWindow(time) {
 
 // 10EMA rising lookback for REENTER (candles ago), same as DINKAN/TOMMAN
 const REENTER_EMA_LOOKBACK = 5;
+const PALEGREEN_EMA_LOOKBACK = 3;
 
 function utGptStrategy2(candles) {
   if (!candles || candles.length < 50) {
@@ -165,13 +170,14 @@ function utGptStrategy2(candles) {
   const C = ha.map(c => c.close);
   const N = C.length;
 
-  // GREEN on normal candles; INFRAGREEN on Heikin-Ashi
+  // GREEN & PALEGREEN on normal candles; INFRAGREEN on Heikin-Ashi
   const nH = candles.map(c => Number(c.high));
   const nL = candles.map(c => Number(c.low));
   const nC = candles.map(c => Number(c.close));
 
-  const green = utBotSeries(nH, nL, nC, 2, 10);     // GREEN on normal candles (Key=2, ATR=10)
-  const infraGreen = utBotSeries(H, L, C, 0.8, 10); // INFRAGREEN on HA (Key=0.8, ATR=10)
+  const green = utBotSeries(nH, nL, nC, 2, 10);       // GREEN on normal candles (Key=2, ATR=10)
+  const palegreen = utBotSeries(nH, nL, nC, 1.5, 10); // PALEGREEN on normal candles (Key=1.5, ATR=10)
+  const infraGreen = utBotSeries(H, L, C, 0.8, 10);   // INFRAGREEN on HA (Key=0.8, ATR=10)
 
   const cyan = utBotSeries(H, L, C, 2, 200);       // CYAN on HA (Key=2, ATR=200)
 
@@ -197,20 +203,27 @@ function utGptStrategy2(candles) {
     signal = "BUY";
     reason = "CYAN flipped bullish (K2/ATR200, Heikin-Ashi) within 9:15-10:00 while 10EMA>30EMA";
   } else {
-    // ── REENTER gates ──
+    // ── REENTER & Extra BUY gates ──
+    const paleGreenFlipBuy = palegreen.pos[i] === 1 && palegreen.pos[i - 1] !== 1;
     const infraGreenFlipBuy = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
     const emaCrossedUp = ema10[i] != null && ema30[i] != null && ema10[i] > ema30[i];
     const ema10Rising = i >= REENTER_EMA_LOOKBACK
       && ema10[i] != null && ema10[i - REENTER_EMA_LOOKBACK] != null
       && ema10[i] > ema10[i - REENTER_EMA_LOOKBACK];
+    const ema10Rising3 = i >= PALEGREEN_EMA_LOOKBACK
+      && ema10[i] != null && ema10[i - PALEGREEN_EMA_LOOKBACK] != null
+      && ema10[i] > ema10[i - PALEGREEN_EMA_LOOKBACK];
     const wmaCrossedUp = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
     const priceAboveVwap = vwap[i] != null && nC[i] > vwap[i]; // normal close above VWAP
 
-    // ── INFRAGREEN→BUY extra gates (REENTER copy + WMA30<10EMA + no WMA30 touch) ──
+    // ── Extra gates (WMA30<10EMA + no WMA30 touch) ──
     const wma30UnderEma10 = wma30[i] != null && ema10[i] != null && wma30[i] < ema10[i];
     const clearOfWma30 = wma30[i] != null && ha[i].low > wma30[i]; // wick+body fully above WMA30
 
-    if (green.pos[i] === 1 && infraGreenFlipBuy && priceAboveVwap && emaCrossedUp && wmaCrossedUp) {
+    if (paleGreenFlipBuy && priceAboveVwap && emaCrossedUp && wmaCrossedUp && ema10Rising3 && wma30UnderEma10 && clearOfWma30) {
+      signal = "BUY";
+      reason = "PALEGREEN flip bullish above VWAP (K1.5/ATR10, normal candles) → BUY, 10EMA>30EMA rising, WMA30<10EMA, candle clear of WMA30 (HA)";
+    } else if (green.pos[i] === 1 && infraGreenFlipBuy && priceAboveVwap && emaCrossedUp && wmaCrossedUp) {
       if (ema10Rising && wma30UnderEma10 && clearOfWma30) {
         signal = "BUY";
         reason = "INFRAGREEN flip bullish above VWAP (K0.8/ATR10) → BUY while GREEN bullish, 10EMA>30EMA rising, WMA30<10EMA, candle clear of WMA30 (HA)";
@@ -226,6 +239,8 @@ function utGptStrategy2(candles) {
     reason,
     greenPos: green.pos[i],
     greenTrail: green.trail[i],
+    palegreenPos: palegreen.pos[i],
+    palegreenTrail: palegreen.trail[i],
     cyanPos: cyan.pos[i],
     cyanTrail: cyan.trail[i],
     infraGreenPos: infraGreen.pos[i],
