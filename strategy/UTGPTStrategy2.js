@@ -20,20 +20,23 @@
 // BUY (PALEGREEN): PALEGREEN bullish flip with price above VWAP,
 //          10EMA>30EMA, 10EMA rising vs 3 candles ago, WMA30>WMA60,
 //          WMA30 below 10EMA, candle fully above WMA30 (neither wick nor body touching it).
+// BUY (INFRAGREEN): GREEN already bullish AND INFRAGREEN flips bullish,
+//          AND price (normal close) above VWAP,
+//          AND 10EMA already above 30EMA (upward cross has occurred),
+//          AND 10EMA rising vs 5 candles ago,
+//          AND WMA30 above WMA60 (already crossed upwards),
+//          AND WMA30 below 10EMA,
+//          AND candle fully above WMA30 (neither wick nor body touching it).
 // REENTER: GREEN already bullish AND INFRAGREEN flips bullish,
 //          AND price (normal close) above VWAP,
 //          AND 10EMA already above 30EMA (upward cross has occurred),
 //          AND 10EMA rising vs 5 candles ago,
-//          AND WMA30 above WMA60 (already crossed upwards).
+//          AND WMA30 above WMA60 (already crossed upwards),
+//          AND WMA30 below 10EMA,
+//          AND candle fully above WMA30 (neither wick nor body touching it).
 //          (BUY/SELL logic untouched — REENTER is an additional signal only.)
 //
-// BUY (INFRAGREEN): all REENTER gates (GREEN bullish, INFRAGREEN bullish
-//          flip with price above VWAP, 10EMA>30EMA, 10EMA rising vs 5
-//          candles ago, WMA30>WMA60), PLUS:
-//          AND WMA30 below 10EMA
-//          AND candle fully above WMA30 (neither wick nor body touching it).
-//          Checked before REENTER — if these extra criteria fail, the
-//          original REENTER evaluation still applies.
+
 // =============================================================================
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
@@ -227,9 +230,9 @@ function utGptStrategy2(candles) {
       if (ema10Rising && wma30UnderEma10 && clearOfWma30) {
         signal = "BUY";
         reason = "INFRAGREEN flip bullish above VWAP (K0.8/ATR10) → BUY while GREEN bullish, 10EMA>30EMA rising, WMA30<10EMA, candle clear of WMA30 (HA)";
-      } else if (ema10Rising) {
+      } else if (ema10Rising && wma30UnderEma10 && clearOfWma30) {
         signal = "REENTER";
-        reason = "INFRAGREEN flip bullish above VWAP (K0.8/ATR10) while GREEN bullish, 10EMA>30EMA rising, WMA30>WMA60 (HA)";
+        reason = "INFRAGREEN flip bullish above VWAP (K0.8/ATR10) while GREEN bullish, 10EMA>30EMA rising, WMA30>WMA60, WMA30<10EMA, candle clear of WMA30 (HA)";
       }
     }
   }
