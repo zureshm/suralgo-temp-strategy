@@ -7,7 +7,7 @@ const { evaluateEMACross : NothingStrategy } = require("./strategy/evaluateEMACr
 const { surStrategy : SURESH_STRATEGY } = require("./strategy/surStrategy");
 const { chatGptStrategy } = require("./strategy/chatGptStrategy");
 const { VWAPUTBotStrategy: HEIKIN_TERROR} = require("./strategy/VWAPUTBotStrategy");
-const { claudSurStrategy : HEIKIN_TOMMAN_RE} = require("./strategy/claudSurStrategy");
+const { claudSurStrategy : ONNARATTAN} = require("./strategy/claudSurStrategy");
 const { superUTBotStrategy : HEIKIN_DEBUGGED_RE } = require("./strategy/superUTBotStrategy");
 const { superDoubleUT :HEIKIN_SUPER_DOUBLE_UT } = require("./strategy/superDoubleUT");
 const { sumeshStrategy :SUMESH_STRATEGY } = require("./strategy/SumeshStrategy");
@@ -17,6 +17,7 @@ const { utGptStrategy2 : ULTRA_TERROR_MIX} = require("./strategy/UTGPTStrategy2"
 const { utGptStrategy3 : HEIKIN_SMARTTHOMMAN_RE} = require("./strategy/UTGPTStrategy3");
 const { utGptStrategy4: HEIKIN_DINKAN_RE } = require("./strategy/UTGPTStrategy4");
 const { utGptStrategy4X :HEIKIN_CAREFUL_RE } = require("./strategy/UTGPTStrategy4X");
+const { smartBreakout : SMART_BREAKOUT } = require("./strategy/SmartBreakout");
 
 const app = express();
 
@@ -87,8 +88,9 @@ const strategies = {
   ULTRA_TERROR_MIX,
   HEIKIN_SMARTBUGGY_RE,
   HEIKIN_DEBUGGED_RE,
-  HEIKIN_TOMMAN_RE,
+  ONNARATTAN,
   HEIKIN_SMARTTHOMMAN_RE,
+  SMART_BREAKOUT,
 };
 
 // Active strategy (default)

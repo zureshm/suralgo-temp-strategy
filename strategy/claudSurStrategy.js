@@ -1,56 +1,40 @@
 // =============================================================================
-// claudSurStrategy — Quint UT Bot Strategy with EMA-gated Re-entry (Heikin-Ashi)
+// claudSurStrategy (copy of utGptStrategy2) — Sumesh UT Bot on Heikin-Ashi candles
+//
+// Same signal engine as SumeshStrategy. GREEN is computed on NORMAL candles,
+// while INFRAGREEN and all EMA/WMA gates are on Heikin-Ashi candles.
 //
 // INDICATORS & CONFIGURATION:
-//   - GREEN  (UT Bot 1): Key Value = 2, ATR Period = 10
-//   - BLUE   (UT Bot 2): Key Value = 3, ATR Period = 10
-//   - CYAN   (UT Bot 3): Key Value = 2, ATR Period = 300
-//   - PURPLE (UT Bot 4): Key Value = 1, ATR Period = 10
-//   - TEAL   (UT Bot 5): Key Value = 4, ATR Period = 10
-//   - INFRAGREEN (UT Bot 6): Key Value = 0.5, ATR Period = 10 (Auto-reentry trigger)
-//   - 10EMA and 30EMA calculated on Heikin-Ashi close.
-//   - MACD (12, 24, 9) on Heikin-Ashi close
-//   - WMA30 / WMA60 on Heikin-Ashi close
+//   - GREEN (UT Bot 1): Key Value = 2, ATR Period = 10 (on NORMAL candles)
+//   - PALEGREEN (UT Bot): Key Value = 1.5, ATR Period = 10 (on NORMAL candles)
+//   - INFRAGREEN (UT Bot 2): Key Value = 0.8, ATR Period = 10 (on HA candles)
+//   - 10EMA / 30EMA on HA close
+//   - WMA30 / WMA60 on HA close
+//   - SRMA (Sentiment Range MA, ChartPrime defaults) on normal candles —
+//     replaces the VWAP gate for buy-side signals
+//   - Candles are converted to Heikin-Ashi for INFRAGREEN + EMA/WMA gates
 //
-// Candles are converted to Heikin-Ashi before UT Bot and EMA calculation.
-//
-// POSITIVE CONDITIONS — gate every BUY and REENTER (all ON flags must hold):
-//   MACD      = ON   // MACD line above Signal line (crossed upwards); rejected if a
-//                    // downward cross happened within last 10 candles while MACD > 0
-//                    // AND MACD line dipped below MACD_TANGLE_FLOOR (8) at the cross
-//                    // (tangling = choppy market, lookback counted from signal candle)
-//                    // Enforced only between 10:00 and 14:00
-//   WMA_CROSS = ON   // WMA30 above WMA60 (crossed upwards)
-//                    // Enforced only between 10:00 and 14:00
-//   TIME WINDOWS:
-//     Before 10:00 → either MACD = ON or WMA_CROSS = ON (at least one)
-//     10:00–14:00  → both enforced
-//     After 14:00  → both auto-pass
-//
-// BUY:      BLUE flips bullish,
-//           OR BLUE already bullish and GREEN flips bullish,
-//           OR BLUE & GREEN already bullish and CYAN flips bullish
-//           (only before 9:40 AM, and 10EMA > 30EMA),
-//           OR TEAL flips bullish.
-//           Every BUY branch requires the positive conditions per the TIME
-//           WINDOWS above: before 10:00 either MACD or WMA_CROSS ON is enough,
-//           10:00–14:00 both must be ON, after 14:00 neither is required.
-// SELL:     CYAN or GREEN or BLUE flips bearish → immediate SELL.
-//           PURPLE flips bearish → conditional:
-//             - If candle HA low ≤ 30EMA (touching/crossing) → immediate SELL.
-//             - If NOT touching 30EMA → pending PURPLE sell stored in memory.
-//               Subsequent candles are watched until any signal fires or PURPLE
-//               flips bullish:
-//               (a) candle HA low ≤ 30EMA → confirm SELL.
-//               (b) candle HA high < pending HIGH AND HA low < pending LOW
-//                   (lower high + lower low) → confirm SELL.
-// REENTER:  INFRAGREEN is the last to join — its most recent bullish flip
-//           happened while GREEN and BLUE were already bullish (window = while
-//           it stays bullish), AND close > highest HA close
-//           of previous 30 candles + 5 pts (excl. current candle), AND
-//           10EMA > 30EMA (strict), AND 10EMA rising vs 5 candles ago.
-//           If a BUY trigger was blocked by the MACD/WMA gate within the last
-//           FAILED_BUY_MEMORY (20) candles, this fires as BUY instead of REENTER.
+// BUY (CYAN): CYAN (UT Bot, Key=2, ATR=200, HA candles) flips bullish,
+//          only for candles between 9:15 and 10:00, AND only while 10EMA > 30EMA (HA).
+// SELL:    GREEN flips bearish.
+// BUY (PALEGREEN): PALEGREEN bullish flip with price above SRMA,
+//          10EMA>30EMA, 10EMA rising vs 3 candles ago, WMA30>WMA60,
+//          WMA30 below 10EMA, candle fully above WMA30 (neither wick nor body touching it).
+// BUY (INFRAGREEN): GREEN already bullish AND INFRAGREEN flips bullish,
+//          AND price (normal close) above SRMA,
+//          AND 10EMA already above 30EMA (upward cross has occurred),
+//          AND 10EMA rising vs 5 candles ago,
+//          AND WMA30 above WMA60 (already crossed upwards),
+//          AND WMA30 below 10EMA,
+//          AND candle fully above WMA30 (neither wick nor body touching it).
+// REENTER: GREEN already bullish AND INFRAGREEN flips bullish,
+//          AND price (normal close) above SRMA,
+//          AND 10EMA already above 30EMA (upward cross has occurred),
+//          AND 10EMA rising vs 5 candles ago,
+//          AND WMA30 above WMA60 (already crossed upwards),
+//          AND WMA30 below 10EMA,
+//          AND candle fully above WMA30 (neither wick nor body touching it).
+//          (BUY/SELL logic untouched — REENTER is an additional signal only.)
 //
 // =============================================================================
 
@@ -134,11 +118,144 @@ function utBotSeries(H, L, C, keyValue, atrPeriod) {
   return { pos: posArr, trail: tsArr };
 }
 
+// ── Sentiment Range MA [ChartPrime] ──────────────────────────────────────────
+// Port of surStrategy.js — stateful MA that re-anchors to source whenever the
+// smoothed candle top/bottom escapes the ATR×multiplier bands, then smooths
+// the anchor step-series with WMA∘SMA ("double filter").
+
+function smaAt(arr, i, len) {
+  if (i < len - 1) return NaN;
+  let sum = 0;
+  for (let j = i - len + 1; j <= i; j++) {
+    const v = arr[j];
+    if (!Number.isFinite(v)) return NaN;
+    sum += v;
+  }
+  return sum / len;
+}
+
+function wmaAt(arr, i, len) {
+  if (i < len - 1) return NaN;
+  const denom = (len * (len + 1)) / 2;
+  let sum = 0;
+  for (let j = 0; j < len; j++) {
+    const v = arr[i - j];
+    if (!Number.isFinite(v)) return NaN;
+    sum += v * (len - j);
+  }
+  return sum / denom;
+}
+
+function smoothSeries(src, len, doubleFilter) {
+  const out = new Array(src.length).fill(NaN);
+  if (doubleFilter) {
+    const sma = new Array(src.length).fill(NaN);
+    for (let i = 0; i < src.length; i++) sma[i] = smaAt(src, i, len);
+    for (let i = 0; i < src.length; i++) out[i] = wmaAt(sma, i, len);
+  } else {
+    for (let i = 0; i < src.length; i++) out[i] = wmaAt(src, i, len);
+  }
+  return out;
+}
+
+function sentimentRangeMA(O, H, L, C, opts = {}) {
+  const outLen = Math.max(1, (opts.length ?? 20) + 1);
+  const doubleFilter = opts.doubleFilter ?? true;
+  const trigLen = Math.max(1, (opts.triggerSmoothing ?? 4) + 1);
+  const atrLen = Math.max(1, Math.floor(opts.atrLength ?? 200));
+  const mult = opts.multiplier ?? 6;
+  const wick = opts.rangeStyle === "wick";
+
+  const n = C.length;
+  const ma = new Array(n).fill(null);
+  const top = new Array(n).fill(null);
+  const bottom = new Array(n).fill(null);
+  const tone = new Array(n).fill(null);
+  if (n === 0 || !Number.isFinite(mult)) return { ma, top, bottom, tone };
+
+  const candleTop = new Array(n);
+  const candleBottom = new Array(n);
+  const smoothTop = new Array(n).fill(NaN);
+  const smoothBottom = new Array(n).fill(NaN);
+  const atr = new Array(n).fill(NaN);
+  const tr = new Array(n);
+
+  for (let i = 0; i < n; i++) {
+    const t = wick ? H[i] : Math.max(O[i], C[i]);
+    const b = wick ? L[i] : Math.min(O[i], C[i]);
+    candleTop[i] = t;
+    candleBottom[i] = b;
+    tr[i] = t - b;
+  }
+  for (let i = trigLen - 1; i < n; i++) {
+    smoothTop[i] = smaAt(candleTop, i, trigLen);
+    smoothBottom[i] = smaAt(candleBottom, i, trigLen);
+  }
+  for (let i = atrLen - 1; i < n; i++) atr[i] = smaAt(tr, i, atrLen);
+
+  const rawMa = new Array(n).fill(NaN);
+  const rawTop = new Array(n).fill(NaN);
+  const rawBottom = new Array(n).fill(NaN);
+  let curRange = NaN;
+  let topRange = NaN;
+  let bottomRange = NaN;
+
+  for (let i = 0; i < n; i++) {
+    const st = smoothTop[i];
+    const sb = smoothBottom[i];
+    const flag =
+      !Number.isFinite(curRange) ||
+      (Number.isFinite(st) && st > topRange) ||
+      (Number.isFinite(sb) && sb < bottomRange);
+    if (flag) {
+      const src = C[i];
+      rawMa[i] = src;
+      const a = atr[i];
+      curRange = Number.isFinite(a) ? a * mult : NaN;
+      topRange = Number.isFinite(curRange) ? src + curRange : NaN;
+      bottomRange = Number.isFinite(curRange) ? src - curRange : NaN;
+    } else {
+      rawMa[i] = i > 0 ? rawMa[i - 1] : NaN;
+    }
+    rawTop[i] = topRange;
+    rawBottom[i] = bottomRange;
+  }
+
+  const smMa = smoothSeries(rawMa, outLen, doubleFilter);
+  const smTop = smoothSeries(rawTop, outLen, doubleFilter);
+  const smBottom = smoothSeries(rawBottom, outLen, doubleFilter);
+
+  for (let i = 0; i < n; i++) {
+    if (!Number.isFinite(smMa[i]) || !Number.isFinite(smTop[i]) || !Number.isFinite(smBottom[i])) continue;
+    ma[i] = smMa[i];
+    top[i] = smTop[i];
+    bottom[i] = smBottom[i];
+    const prev = i > 0 ? smMa[i - 1] : NaN;
+    const prevV = Number.isFinite(prev) ? prev : 0;
+    const d = smMa[i] - prevV;
+    tone[i] = d > 0 ? "bull" : d < 0 ? "bear" : "neutral";
+  }
+
+  return { ma, top, bottom, tone };
+}
+
+// CYAN BUY is only allowed for candles stamped 09:15 through 10:00 (inclusive)
+function inCyanWindow(time) {
+  const m = /[ T](\d{2}):(\d{2})/.exec(String(time));
+  if (!m) return false;
+  const mins = Number(m[1]) * 60 + Number(m[2]);
+  return mins >= 9 * 60 + 15 && mins <= 10 * 60;
+}
+
 // ── Main strategy ────────────────────────────────────────────────────────────
 
+// 10EMA rising lookback for REENTER (candles ago), same as DINKAN/TOMMAN
+const REENTER_EMA_LOOKBACK = 5;
+const PALEGREEN_EMA_LOOKBACK = 3;
+
 function claudSurStrategy(candles) {
-  if (!candles || candles.length < 100) {
-    return { signal: "WAIT", reason: "Not enough data (need 100+)" };
+  if (!candles || candles.length < 50) {
+    return { signal: "WAIT", reason: "Not enough data (need 50+)" };
   }
 
   // ── Convert to Heikin-Ashi ──
@@ -160,270 +277,86 @@ function claudSurStrategy(candles) {
   const C = ha.map(c => c.close);
   const N = C.length;
 
-  const green      = utBotSeries(H, L, C, 2, 10);   // GREEN      (Key=2, ATR=10)
-  const blue       = utBotSeries(H, L, C, 3, 10);   // BLUE       (Key=3, ATR=10)
-  const cyan       = utBotSeries(H, L, C, 2, 300);  // CYAN       (Key=2, ATR=300)
-  const purple     = utBotSeries(H, L, C, 1, 10);   // PURPLE     (Key=1, ATR=10)
-  const teal       = utBotSeries(H, L, C, 4, 10);   // TEAL       (Key=4, ATR=10)
-  const infraGreen = utBotSeries(H, L, C, 0.5, 10); // INFRAGREEN (Key=0.5, ATR=10)
+  // GREEN & PALEGREEN on normal candles; INFRAGREEN on Heikin-Ashi
+  const nO = candles.map(c => Number(c.open));
+  const nH = candles.map(c => Number(c.high));
+  const nL = candles.map(c => Number(c.low));
+  const nC = candles.map(c => Number(c.close));
 
-  const ema10 = emaSeries(C, 10); // 10EMA on Heikin-Ashi close
-  const ema30 = emaSeries(C, 30); // 30EMA on Heikin-Ashi close
+  const green = utBotSeries(nH, nL, nC, 2, 10);       // GREEN on normal candles (Key=2, ATR=10)
+  const palegreen = utBotSeries(nH, nL, nC, 1.5, 10); // PALEGREEN on normal candles (Key=1.5, ATR=10)
+  const infraGreen = utBotSeries(H, L, C, 0.8, 10);   // INFRAGREEN on HA (Key=0.8, ATR=10)
 
-  // Positive Condition A: MACD(12,24,9) line above Signal line
-  const ema12 = emaSeries(C, 12);
-  const ema24 = emaSeries(C, 24);
-  const macdLine = C.map((_, i) => (ema12[i] != null && ema24[i] != null) ? ema12[i] - ema24[i] : null);
-  const macdSignal = emaSeries(macdLine.map(v => v == null ? 0 : v), 9);
+  const cyan = utBotSeries(H, L, C, 2, 200);       // CYAN on HA (Key=2, ATR=200)
 
-  // Positive Condition B: WMA30 above WMA60
-  const wma30 = wmaSeries(C, 30);
-  const wma60 = wmaSeries(C, 60);
+  const ema10 = emaSeries(C, 10); // 10EMA on HA close
+  const ema30 = emaSeries(C, 30); // 30EMA on HA close
 
-  // MACD tangle filter: a down-cross within this many candles (counted back from
-  // the signal candle) marks the current MACD>Signal state as a re-cross → reject.
-  const MACD_TANGLE_LOOKBACK = 10;
-  const MACD_TANGLE_FLOOR = 8; // tangle only counts if MACD dipped below this value
+  const wma30 = wmaSeries(C, 30); // WMA30 on HA close
+  const wma60 = wmaSeries(C, 60); // WMA60 on HA close
 
-  // Candle time in minutes (HH:MM) — used by CYAN cutoff, day-boundary and TEAL-after-10AM checks
-  const candleMinutes = candles.map(cd => {
-    const m = /(\d{1,2}):(\d{2})/.exec(String(cd && cd.time));
-    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
-  });
+  const srma = sentimentRangeMA(nO, nH, nL, nC); // SRMA on normal candles (frontend defaults)
 
-  // CYAN BUY cutoff: only allowed before 9:40 AM (candle time)
-  const cyanBuyTimeOK = candleMinutes.map(mins => (mins == null ? true : mins < 9 * 60 + 40));
+  const i = N - 1;
+  let signal = "WAIT";
+  let reason = "No flip";
 
-  // Auto re-entry gate config
-  const REENTER_PEAK_CANDLES = 30; // highest HA close over previous N candles (excl. current)
-  const REENTER_POINTS = 5;        // close must clear the peak by this many points
-  const REENTER_EMA_LOOKBACK = 5;  // EMA10 must exceed its value N candles ago
+  if (green.pos[i] === -1 && green.pos[i - 1] !== -1) {
+    signal = "SELL";
+    reason = "GREEN flipped bearish (normal candles)";
+  } else if (cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1 && inCyanWindow(candles[i].time) && ema10[i] != null && ema30[i] != null && ema10[i] > ema30[i]) {
+    signal = "BUY";
+    reason = "CYAN flipped bullish (K2/ATR200, Heikin-Ashi) within 9:15-10:00 while 10EMA>30EMA";
+  } else {
+    // ── REENTER & Extra BUY gates ──
+    const paleGreenFlipBuy = palegreen.pos[i] === 1 && palegreen.pos[i - 1] !== 1;
+    const infraGreenFlipBuy = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
+    const emaCrossedUp = ema10[i] != null && ema30[i] != null && ema10[i] > ema30[i];
+    const ema10Rising = i >= REENTER_EMA_LOOKBACK
+      && ema10[i] != null && ema10[i - REENTER_EMA_LOOKBACK] != null
+      && ema10[i] > ema10[i - REENTER_EMA_LOOKBACK];
+    const ema10Rising3 = i >= PALEGREEN_EMA_LOOKBACK
+      && ema10[i] != null && ema10[i - PALEGREEN_EMA_LOOKBACK] != null
+      && ema10[i] > ema10[i - PALEGREEN_EMA_LOOKBACK];
+    const wmaCrossedUp = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
+    const closeAboveSrma = srma.ma[i] != null && nC[i] > srma.ma[i]; // normal close above SRMA
 
-  // Failed-BUY memory: a BUY trigger blocked by the macdWmaOK gate is remembered
-  // for this many candles; a REENTER firing inside the window becomes a BUY.
-  const FAILED_BUY_MEMORY = 20;
+    // ── Extra gates (WMA30<10EMA + no WMA30 touch) ──
+    const wma30UnderEma10 = wma30[i] != null && ema10[i] != null && wma30[i] < ema10[i];
+    const clearOfWma30 = wma30[i] != null && ha[i].low > wma30[i]; // wick+body fully above WMA30
 
-  let lastSignal = "WAIT", lastReason = "No signal";
-  let trending = false;
-  let condA = false, condB = false, macdTangled = false;
-
-  // Pending PURPLE sell state
-  let pendingPurpleSell = { active: false, high: 0, low: 0 };
-
-  // Candle index + branch name of last BUY trigger blocked by the macdWmaOK gate
-  let pendingFailedBuyIdx = -Infinity;
-  let pendingFailedBuyBranch = "";
-
-  // Candle index of latest INFRAGREEN bullish flip (for the REENTER trigger)
-  let lastInfraGreenFlipBuyIdx = -Infinity;
-
-  for (let i = 1; i < N; i++) {
-    const blueBull       = blue.pos[i] === 1;
-    const greenBull      = green.pos[i] === 1;
-    const cyanBull        = cyan.pos[i] === 1;
-    const purpleBull      = purple.pos[i] === 1;
-    const tealBull        = teal.pos[i] === 1;
-    const infraGreenBull  = infraGreen.pos[i] === 1;
-
-    const blueFlipBuy        = blue.pos[i] === 1 && blue.pos[i - 1] !== 1;
-    const greenFlipBuy       = green.pos[i] === 1 && green.pos[i - 1] !== 1;
-    const cyanFlipBuy        = cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1;
-    const tealFlipBuy        = teal.pos[i] === 1 && teal.pos[i - 1] !== 1;
-    const infraGreenFlipBuy  = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
-
-    const blueFlipSell  = blue.pos[i] === -1 && blue.pos[i - 1] !== -1;
-    const greenFlipSell = green.pos[i] === -1 && green.pos[i - 1] !== -1;
-    const cyanFlipSell  = cyan.pos[i] === -1 && cyan.pos[i - 1] !== -1;
-
-    const purpleFlipBuy = purple.pos[i] === 1 && purple.pos[i - 1] !== 1;
-    const purpleFlipSell = purple.pos[i] === -1 && purple.pos[i - 1] !== -1;
-
-    // EMA values for this candle
-    const e10 = ema10[i];
-    const e30 = ema30[i];
-    const emaCrossedUp = e10 != null && e30 != null && e10 > e30;
-    const haLowVsEma30 = e30 != null ? L[i] >= e30 : false; // strict: HA low must be at or above 30EMA
-    const touchesEma30  = e30 != null ? L[i] <= e30 : false; // candle touches or crosses below 30EMA
-
-    // Auto re-entry gates: peak break (excl. current candle) + EMA10 rising
-    const reEntryPeak = i > REENTER_PEAK_CANDLES ? Math.max(...C.slice(i - REENTER_PEAK_CANDLES, i)) : null;
-    const priceBreaksPeak = reEntryPeak != null && C[i] > reEntryPeak + REENTER_POINTS;
-    const ema10Rising = e10 != null && ema10[i - REENTER_EMA_LOOKBACK] != null && e10 > ema10[i - REENTER_EMA_LOOKBACK];
-
-    // BUY/REENTER gate: Condition A (MACD > Signal, no recent tangle) AND Condition B (WMA30 > WMA60)
-    const macdAbove = macdLine[i] != null && macdSignal[i] != null && macdLine[i] > macdSignal[i];
-    macdTangled = false;
-    if (macdAbove && macdLine[i] > 0) {
-      for (let j = Math.max(1, i - MACD_TANGLE_LOOKBACK); j <= i; j++) {
-        if (macdLine[j] != null && macdSignal[j] != null && macdLine[j - 1] != null && macdSignal[j - 1] != null
-          && macdLine[j] < macdSignal[j] && macdLine[j - 1] >= macdSignal[j - 1]
-          && macdLine[j] < MACD_TANGLE_FLOOR) {
-          macdTangled = true;
-          break;
-        }
+    if (paleGreenFlipBuy && closeAboveSrma && emaCrossedUp && wmaCrossedUp && ema10Rising3 && wma30UnderEma10 && clearOfWma30) {
+      signal = "BUY";
+      reason = "PALEGREEN flip bullish above SRMA (K1.5/ATR10, normal candles) → BUY, 10EMA>30EMA rising, WMA30<10EMA, candle clear of WMA30 (HA)";
+    } else if (green.pos[i] === 1 && infraGreenFlipBuy && closeAboveSrma && emaCrossedUp && wmaCrossedUp) {
+      if (ema10Rising && wma30UnderEma10 && clearOfWma30) {
+        signal = "BUY";
+        reason = "INFRAGREEN flip bullish above SRMA (K0.8/ATR10) → BUY while GREEN bullish, 10EMA>30EMA rising, WMA30<10EMA, candle clear of WMA30 (HA)";
+      } else if (ema10Rising && wma30UnderEma10 && clearOfWma30) {
+        signal = "REENTER";
+        reason = "INFRAGREEN flip bullish above SRMA (K0.8/ATR10) while GREEN bullish, 10EMA>30EMA rising, WMA30>WMA60, WMA30<10EMA, candle clear of WMA30 (HA)";
       }
     }
-    // Time-window gating for MACD and WMA:
-    //   Before 10:00 → either raw MACD or raw WMA must be ON (at least one)
-    //   10:00–14:00  → both enforced
-    //   After 14:00  → both auto-pass
-    //   Unparseable  → both enforced (conservative)
-    const mins = candleMinutes[i];
-    const macdEnforced = mins == null || (mins >= 10 * 60 && mins < 14 * 60);
-    const wmaEnforced  = macdEnforced; // WMA shares the same 10:00–14:00 window
-    const earlyWindow  = mins != null && mins < 10 * 60;
-
-    const rawMacd = macdAbove && !macdTangled;
-    const rawWma  = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
-
-    condA = !macdEnforced || rawMacd;
-    condB = !wmaEnforced  || rawWma;
-
-    const macdWmaOK = earlyWindow
-      ? (rawMacd || rawWma)   // before 10:00: either one suffices
-      : (condA && condB);     // after 10:00: each enforced in its window
-
-    // TRENDING: true when all 5 UT Bots are bullish on this candle
-    trending = blueBull && greenBull && cyanBull && purpleBull && tealBull;
-
-    if (infraGreenFlipBuy) lastInfraGreenFlipBuyIdx = i;
-
-    let sig = "WAIT", reason = "No signal";
-
-    // ── SELL: CYAN or GREEN or BLUE flips bearish (immediate) ──
-    if (cyanFlipSell || greenFlipSell || blueFlipSell) {
-      sig = "SELL";
-      const flips = [];
-      if (cyanFlipSell) flips.push("CYAN");
-      if (greenFlipSell) flips.push("GREEN");
-      if (blueFlipSell) flips.push("BLUE");
-      reason = flips.join(" & ") + " flip bearish";
-      pendingPurpleSell = { active: false, high: 0, low: 0 }; // clear pending
-    }
-    // ── SELL: PURPLE flips bearish (conditional on 30EMA) ──
-    // Note: PURPLE bullish flip cancels pending BEFORE this block (checked below)
-    else if (purpleFlipSell && !purpleFlipBuy) {
-      if (touchesEma30) {
-        sig = "SELL";
-        reason = "PURPLE flip bearish, candle touches 30EMA";
-        pendingPurpleSell = { active: false, high: 0, low: 0 };
-      } else {
-        // Not touching 30EMA → store pending, wait for confirmation
-        pendingPurpleSell = { active: true, high: H[i], low: L[i] };
-      }
-    }
-    // ── Pending PURPLE SELL confirmation ──
-    // Only checked if PURPLE did NOT flip bullish this candle
-    else if (pendingPurpleSell.active && !purpleFlipBuy) {
-      if (touchesEma30) {
-        sig = "SELL";
-        reason = "Pending PURPLE sell confirmed: candle touches 30EMA";
-        pendingPurpleSell = { active: false, high: 0, low: 0 };
-      } else if (H[i] < pendingPurpleSell.high && L[i] < pendingPurpleSell.low) {
-        sig = "SELL";
-        reason = "Pending PURPLE sell confirmed: lower high & lower low than PURPLE sell candle";
-        pendingPurpleSell = { active: false, high: 0, low: 0 };
-      }
-    }
-
-    // BUY trigger conditions WITHOUT the macdWmaOK positive-conditions gate,
-    // so a gate-blocked BUY can be remembered (failed-BUY memory below).
-    const blueBuyTrig  = blueFlipBuy;
-    const greenBuyTrig = blueBull && greenFlipBuy;
-    const cyanBuyTrig  = blueBull && greenBull && cyanFlipBuy && cyanBuyTimeOK[i] && emaCrossedUp;
-    const tealBuyTrig  = tealFlipBuy;
-
-    // INFRAGREEN triggers REENTER only when it was the LAST to join: its most
-    // recent bullish flip happened while GREEN and BLUE were already bullish,
-    // and it is still bullish now.
-    const idxIG = lastInfraGreenFlipBuyIdx;
-    const infraGreenTrig = infraGreenBull && idxIG >= 0
-      && green.pos[idxIG] === 1 && blue.pos[idxIG] === 1;
-
-    // ── BUY: BLUE flips bullish ──
-    if (sig === "WAIT" && blueBuyTrig && macdWmaOK) {
-      sig = "BUY";
-      reason = "BLUE flip bullish (K3/ATR10) [MACD+WMA ok]";
-    }
-    // ── BUY: BLUE already bullish, GREEN flips bullish ──
-    else if (sig === "WAIT" && greenBuyTrig && macdWmaOK) {
-      sig = "BUY";
-      reason = "GREEN flip bullish (K2/ATR10) while BLUE bullish [MACD+WMA ok]";
-    }
-    // ── BUY: BLUE & GREEN already bullish, CYAN flips bullish (only before 9:40 AM, 10EMA>30EMA) ──
-    else if (sig === "WAIT" && cyanBuyTrig && macdWmaOK) {
-      sig = "BUY";
-      reason = "CYAN flip bullish (K2/ATR300) while BLUE & GREEN bullish, 10EMA>30EMA [MACD+WMA ok]";
-    }
-    // ── BUY: TEAL flips bullish ──
-    else if (sig === "WAIT" && tealBuyTrig && macdWmaOK) {
-      sig = "BUY";
-      reason = "TEAL flip bullish (K4/ATR10) [MACD+WMA ok]";
-    }
-    // ── REENTER: INFRAGREEN bullish + peak break + EMA10>30 & rising ──
-    // If a BUY trigger within the last FAILED_BUY_MEMORY candles was blocked by
-    // the macdWmaOK gate, this fires as BUY instead of REENTER.
-    else if (sig === "WAIT" && greenBull && blueBull && purpleBull && infraGreenTrig
-      && priceBreaksPeak && emaCrossedUp && ema10Rising && macdWmaOK) {
-      if (i - pendingFailedBuyIdx <= FAILED_BUY_MEMORY) {
-        sig = "BUY";
-        reason = `BUY (re-entry): REENTER conditions met within ${FAILED_BUY_MEMORY} candles of MACD/WMA-blocked ${pendingFailedBuyBranch} | close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}`;
-      } else {
-        sig = "REENTER";
-        reason = `Auto re-entry: close ${C[i].toFixed(2)} > ${REENTER_PEAK_CANDLES}-candle peak ${reEntryPeak.toFixed(2)} +${REENTER_POINTS}, EMA10>30 & rising, INFRAGREEN bullish`;
-      }
-    }
-
-    // ── Failed-BUY memory: record a BUY trigger blocked by the macdWmaOK gate ──
-    if (sig === "WAIT" && !macdWmaOK) {
-      if (blueBuyTrig)       { pendingFailedBuyIdx = i; pendingFailedBuyBranch = "BLUE flip"; }
-      else if (greenBuyTrig) { pendingFailedBuyIdx = i; pendingFailedBuyBranch = "GREEN flip"; }
-      else if (cyanBuyTrig)  { pendingFailedBuyIdx = i; pendingFailedBuyBranch = "CYAN flip"; }
-      else if (tealBuyTrig)  { pendingFailedBuyIdx = i; pendingFailedBuyBranch = "TEAL flip"; }
-    }
-
-    // Clear pending PURPLE sell if any BUY/REENTER signal fired, or PURPLE flipped bullish
-    if (sig === "BUY" || sig === "REENTER" || purpleFlipBuy) {
-      pendingPurpleSell = { active: false, high: 0, low: 0 };
-    }
-
-    // Clear failed-BUY memory on any SELL, or once a BUY/REENTER played out
-    if (sig === "SELL" || sig === "BUY" || sig === "REENTER") {
-      pendingFailedBuyIdx = -Infinity;
-      pendingFailedBuyBranch = "";
-    }
-
-    lastSignal = sig;
-    lastReason = reason;
   }
 
   return {
-    signal: lastSignal,
-    reason: lastReason,
-    trending,
-    greenPos: green.pos[N - 1],
-    bluePos: blue.pos[N - 1],
-    cyanPos: cyan.pos[N - 1],
-    purplePos: purple.pos[N - 1],
-    tealPos: teal.pos[N - 1],
-    infraGreenPos: infraGreen.pos[N - 1],
-    greenTrail: green.trail[N - 1],
-    blueTrail: blue.trail[N - 1],
-    cyanTrail: cyan.trail[N - 1],
-    purpleTrail: purple.trail[N - 1],
-    tealTrail: teal.trail[N - 1],
-    infraGreenTrail: infraGreen.trail[N - 1],
-    ema10: ema10[N - 1],
-    ema30: ema30[N - 1],
-    macdLine: macdLine[N - 1],
-    macdSignal: macdSignal[N - 1],
-    wma30: wma30[N - 1],
-    wma60: wma60[N - 1],
-    condA,
-    macdTangled,
-    condB,
-    close: C[N - 1]
+    signal,
+    reason,
+    greenPos: green.pos[i],
+    greenTrail: green.trail[i],
+    palegreenPos: palegreen.pos[i],
+    palegreenTrail: palegreen.trail[i],
+    cyanPos: cyan.pos[i],
+    cyanTrail: cyan.trail[i],
+    infraGreenPos: infraGreen.pos[i],
+    infraGreenTrail: infraGreen.trail[i],
+    srma: srma.ma[i],
+    ema10: ema10[i],
+    ema30: ema30[i],
+    wma30: wma30[i],
+    wma60: wma60[i],
+    close: C[i]
   };
 }
 
-module.exports = { claudSurStrategy };
+module.exports = { claudSurStrategy, utGptStrategy2: claudSurStrategy };
