@@ -20,14 +20,14 @@
 //   - MAX_TRADES_PER_DAY = 3 entries.
 //   - No new entries after NO_ENTRY_AFTER (15:00).
 //   - SELL on stop break, or EOD square-off at EOD_EXIT_MIN (15:20).
-//   - RESURRECTION (REENTER): the breakout level stays alive for the day.
-//     Any fresh close crossing back above it emits REENTER — the real
-//     position may already be out on its own SL/target, so a reclaim of
-//     the level resurrects the trade. REENTERs don't consume the daily cap.
+//   - REENTERs don't consume the daily cap and never touch inTrade.
 //   - LADDER (REENTER): each STEP_PCT (5%) extension above the move's
-//     peak re-arms the next rung — close above rung → REENTER.
+//     peak re-arms the next rung — close above rung AND GREEN UT Bot
+//     (Key=2, ATR=10) bullish → REENTER.
 //   - Day change resets inTrade, level, and the counter.
 // =============================================================================
+
+const { utBotSeries } = require("./PatternBreakout");
 
 function timeToMinutes(timeStr) {
   if (!timeStr) return null;
@@ -98,6 +98,8 @@ function ascendingTriangle(candles) {
   const L = candles.map(c => Number(c.low));
   const C = candles.map(c => Number(c.close));
 
+  const green = utBotSeries(H, L, C, 2, 10);   // GREEN UT Bot (Key=2, ATR=10) — gates ladder REENTERs
+
   let day = null;
   let inTrade = false, stop = null, breakLevel = null, tradesToday = 0;
   let peakHigh = null;   // highest high since the last entry
@@ -122,16 +124,11 @@ function ascendingTriangle(candles) {
     // Track the move's peak — the ladder hangs off it
     if (peakHigh != null && H[i] > peakHigh) peakHigh = H[i];
 
-    // Resurrection point: last breakout level, alive for the whole day.
-    // A fresh close crossing back above it = REENTER.
-    const reenter = breakLevel != null
-      && (mins == null || mins < NO_ENTRY_AFTER)
-      && C[i] > breakLevel && C[i - 1] <= breakLevel;
-
-    // Ladder: close above the next rung (peak + 5%) = REENTER
+    // Ladder: close above the next rung (peak + 5%) AND GREEN bullish = REENTER
     const ladder = nextRung != null
       && (mins == null || mins < NO_ENTRY_AFTER)
-      && C[i] > nextRung;
+      && C[i] > nextRung
+      && green.pos[i] === 1;
 
     if (inTrade) {
       if (mins != null && mins >= EOD_EXIT_MIN) {
@@ -142,9 +139,6 @@ function ascendingTriangle(candles) {
         signal = "SELL";
         reason = `close below pattern stop (${stop.toFixed(2)})`;
         inTrade = false;
-      } else if (reenter) {
-        signal = "REENTER";
-        reason = `Resurrection: close back above breakout level ${breakLevel.toFixed(2)}`;
       } else if (ladder) {
         signal = "REENTER";
         reason = `Ladder: close ${C[i].toFixed(2)} above +${STEP_PCT * 100}% rung ${nextRung.toFixed(2)} (peak ${peakHigh.toFixed(2)})`;
@@ -161,10 +155,8 @@ function ascendingTriangle(candles) {
           const sameLevel = breakLevel != null
             && Math.abs(tri.resistance - breakLevel) / breakLevel < 0.01;
           if (sameLevel) {
-            // Same structure re-detected at the armed level — resurrection,
-            // not a new trade
-            signal = "REENTER";
-            reason = `Resurrection: close back above breakout level ${breakLevel.toFixed(2)}`;
+            // Same structure re-detected at the old level — not a new
+            // trade, and resurrection is disabled, so emit nothing.
           } else {
             signal = "BUY";
             reason = `Ascending triangle breakout above ${tri.resistance.toFixed(2)} (${tri.len} bars, stop ${tri.support.toFixed(2)})`;
@@ -176,13 +168,6 @@ function ascendingTriangle(candles) {
             tradesToday++;
           }
         }
-      }
-      // Resurrection cross — fires only if no fresh pattern fired this bar.
-      // Signal only — do NOT touch inTrade, or the state re-locks and
-      // blocks all fresh patterns till EOD.
-      if (signal === "WAIT" && reenter) {
-        signal = "REENTER";
-        reason = `Resurrection: close back above breakout level ${breakLevel.toFixed(2)}`;
       }
       if (signal === "WAIT" && ladder) {
         signal = "REENTER";

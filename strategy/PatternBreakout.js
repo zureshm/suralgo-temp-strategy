@@ -25,10 +25,7 @@
 //   - MAX_TRADES_PER_DAY = 3 entries total (ORB ≤ 1, cup ≤ 2).
 //   - No new entries after NO_ENTRY_AFTER (15:00).
 //   - SELL on stop break, or EOD square-off at EOD_EXIT_MIN (15:20).
-//   - RESURRECTION (REENTER): the breakout level stays alive for the day.
-//     Any fresh close crossing back above it emits REENTER — the real
-//     position may already be out on its own SL/target, so a reclaim of
-//     the level resurrects the trade. REENTERs don't consume the daily cap.
+//   - REENTERs don't consume the daily cap and never touch inTrade.
 //   - LADDER (REENTER): each STEP_PCT (5%) extension above the move's
 //     peak re-arms the next rung — close above rung → REENTER. Laddered
 //     continuation signals while the breakout keeps running.
@@ -39,6 +36,63 @@ function timeToMinutes(timeStr) {
   if (!timeStr) return null;
   const m = /(\d{1,2}):(\d{2})/.exec(String(timeStr));
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+// ── UT Bot (Key Value × ATR trailing stop) ───────────────────────────────────
+// Same implementation as claudSurStrategy — used to gate ladder REENTERs on
+// GREEN (Key=2, ATR=10, normal candles) being in bullish state.
+
+function trueRangeSeries(H, L, C) {
+  const tr = [];
+  for (let i = 0; i < C.length; i++) {
+    if (i === 0) { tr.push(H[i] - L[i]); continue; }
+    tr.push(Math.max(H[i] - L[i], Math.abs(H[i] - C[i - 1]), Math.abs(L[i] - C[i - 1])));
+  }
+  return tr;
+}
+
+function rmaSeries(src, period) {
+  const out = new Array(src.length).fill(null);
+  if (src.length < period) return out;
+  let s = 0;
+  for (let i = 0; i < period; i++) s += src[i];
+  out[period - 1] = s / period;
+  for (let i = period; i < src.length; i++) out[i] = (out[i - 1] * (period - 1) + src[i]) / period;
+  return out;
+}
+
+function atrSeries(H, L, C, period) { return rmaSeries(trueRangeSeries(H, L, C), period); }
+
+function utBotSeries(H, L, C, keyValue, atrPeriod) {
+  const N = C.length;
+  const atr = atrSeries(H, L, C, atrPeriod);
+  const posArr = new Array(N).fill(0);
+  const tsArr = new Array(N).fill(null);
+
+  let ts = 0, pos = 0;
+  for (let i = 1; i < N; i++) {
+    if (atr[i] == null) { posArr[i] = pos; tsArr[i] = ts; continue; }
+    const nLoss = keyValue * atr[i];
+    const prevTS = ts;
+
+    if (C[i] > prevTS && C[i - 1] > prevTS) {
+      ts = Math.max(prevTS, C[i] - nLoss);
+    } else if (C[i] < prevTS && C[i - 1] < prevTS) {
+      ts = Math.min(prevTS, C[i] + nLoss);
+    } else if (C[i] > prevTS) {
+      ts = C[i] - nLoss;
+    } else {
+      ts = C[i] + nLoss;
+    }
+
+    if (C[i - 1] < prevTS && C[i] > prevTS) pos = 1;
+    else if (C[i - 1] > prevTS && C[i] < prevTS) pos = -1;
+
+    posArr[i] = pos;
+    tsArr[i] = ts;
+  }
+
+  return { pos: posArr, trail: tsArr };
 }
 
 // ── Cup & handle detector ────────────────────────────────────────────────────
@@ -132,6 +186,8 @@ function patternBreakout(candles) {
   const L = candles.map(c => Number(c.low));
   const C = candles.map(c => Number(c.close));
 
+  const green = utBotSeries(H, L, C, 2, 10);   // GREEN UT Bot (Key=2, ATR=10) — gates ladder REENTERs
+
   let day = null;
   let orbHigh = null, orbLow = null, orbSealed = false, orbTraded = false;
   let inTrade = false, stop = null, breakLevel = null, tradesToday = 0;
@@ -172,16 +228,11 @@ function patternBreakout(candles) {
     // Track the move's peak — the ladder hangs off it
     if (peakHigh != null && H[i] > peakHigh) peakHigh = H[i];
 
-    // Resurrection point: last breakout level, alive for the whole day.
-    // A fresh close crossing back above it = REENTER.
-    const reenter = breakLevel != null
-      && (mins == null || mins < NO_ENTRY_AFTER)
-      && C[i] > breakLevel && C[i - 1] <= breakLevel;
-
-    // Ladder: close above the next rung (peak + 10%) = REENTER
+    // Ladder: close above the next rung (peak + 5%) AND GREEN bullish = REENTER
     const ladder = nextRung != null
       && (mins == null || mins < NO_ENTRY_AFTER)
-      && C[i] > nextRung;
+      && C[i] > nextRung
+      && green.pos[i] === 1;
 
     if (inTrade) {
       if (mins != null && mins >= EOD_EXIT_MIN) {
@@ -192,9 +243,6 @@ function patternBreakout(candles) {
         signal = "SELL";
         reason = `close below pattern stop (${stop.toFixed(2)})`;
         inTrade = false;
-      } else if (reenter) {
-        signal = "REENTER";
-        reason = `Resurrection: close back above breakout level ${breakLevel.toFixed(2)}`;
       } else if (ladder) {
         signal = "REENTER";
         reason = `Ladder: close ${C[i].toFixed(2)} above +${STEP_PCT * 100}% rung ${nextRung.toFixed(2)} (peak ${peakHigh.toFixed(2)})`;
@@ -224,10 +272,8 @@ function patternBreakout(candles) {
             const sameLevel = breakLevel != null
               && Math.abs(cup.rimHigh - breakLevel) / breakLevel < 0.01;
             if (sameLevel) {
-              // Same structure re-detected at the armed level — resurrection,
-              // not a new trade
-              signal = "REENTER";
-              reason = `Resurrection: close back above breakout level ${breakLevel.toFixed(2)}`;
+              // Same cup re-detected at the old level — not a new trade,
+              // and resurrection is disabled, so emit nothing.
             } else {
               signal = "BUY";
               reason = `Cup & handle breakout above rim ${cup.rimHigh.toFixed(2)} (cup ${cup.cupLen} bars, handle ${cup.handleLen})`;
@@ -240,13 +286,6 @@ function patternBreakout(candles) {
             }
           }
         }
-      }
-      // Resurrection cross — fires only if no fresh pattern fired this bar.
-      // Signal only — do NOT touch inTrade, or the state re-locks and
-      // blocks all fresh patterns till EOD.
-      if (signal === "WAIT" && reenter) {
-        signal = "REENTER";
-        reason = `Resurrection: close back above breakout level ${breakLevel.toFixed(2)}`;
       }
       if (signal === "WAIT" && ladder) {
         signal = "REENTER";
@@ -275,6 +314,7 @@ module.exports = {
   patternBreakout,
   findCupBreakout,
   timeToMinutes,
+  utBotSeries,
   ORB_START_MIN,
   ORB_END_MIN,
   ORB_ENTRY_CUTOFF,
