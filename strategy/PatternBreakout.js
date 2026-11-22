@@ -29,6 +29,9 @@
 //     Any fresh close crossing back above it emits REENTER — the real
 //     position may already be out on its own SL/target, so a reclaim of
 //     the level resurrects the trade. REENTERs don't consume the daily cap.
+//   - LADDER (REENTER): each STEP_PCT (5%) extension above the move's
+//     peak re-arms the next rung — close above rung → REENTER. Laddered
+//     continuation signals while the breakout keeps running.
 //   - Day change resets inTrade, ORB state, level, and the counter.
 // =============================================================================
 
@@ -117,6 +120,7 @@ const ORB_MAX_RANGE_PCT = 0.08;      // skip degenerate/explosive open ranges
 const NO_ENTRY_AFTER = 15 * 60;      // no new entries after 15:00
 const EOD_EXIT_MIN = 15 * 60 + 20;   // square-off 15:20
 const MAX_TRADES_PER_DAY = 3;
+const STEP_PCT = 0.05;               // each 5% extension above the peak = a REENTER rung
 
 function patternBreakout(candles) {
   if (!candles || candles.length < 20) {
@@ -131,6 +135,8 @@ function patternBreakout(candles) {
   let day = null;
   let orbHigh = null, orbLow = null, orbSealed = false, orbTraded = false;
   let inTrade = false, stop = null, breakLevel = null, tradesToday = 0;
+  let peakHigh = null;   // highest high since the last entry
+  let nextRung = null;   // peakHigh × (1 + STEP_PCT) — next ladder trigger
   let lastRim = null;
   let signal = "WAIT", reason = "No pattern";
 
@@ -143,6 +149,7 @@ function patternBreakout(candles) {
       day = d;
       orbHigh = orbLow = null; orbSealed = false; orbTraded = false;
       inTrade = false; stop = null; breakLevel = null; tradesToday = 0;
+      peakHigh = null; nextRung = null;
     }
 
     // ── Build the opening range ──
@@ -162,11 +169,19 @@ function patternBreakout(candles) {
     signal = "WAIT";
     reason = "No pattern";
 
+    // Track the move's peak — the ladder hangs off it
+    if (peakHigh != null && H[i] > peakHigh) peakHigh = H[i];
+
     // Resurrection point: last breakout level, alive for the whole day.
     // A fresh close crossing back above it = REENTER.
     const reenter = breakLevel != null
       && (mins == null || mins < NO_ENTRY_AFTER)
       && C[i] > breakLevel && C[i - 1] <= breakLevel;
+
+    // Ladder: close above the next rung (peak + 10%) = REENTER
+    const ladder = nextRung != null
+      && (mins == null || mins < NO_ENTRY_AFTER)
+      && C[i] > nextRung;
 
     if (inTrade) {
       if (mins != null && mins >= EOD_EXIT_MIN) {
@@ -180,6 +195,9 @@ function patternBreakout(candles) {
       } else if (reenter) {
         signal = "REENTER";
         reason = `Resurrection: close back above breakout level ${breakLevel.toFixed(2)}`;
+      } else if (ladder) {
+        signal = "REENTER";
+        reason = `Ladder: close ${C[i].toFixed(2)} above +${STEP_PCT * 100}% rung ${nextRung.toFixed(2)} (peak ${peakHigh.toFixed(2)})`;
       }
     } else {
       // Fresh patterns FIRST — a new breakout outranks resurrection.
@@ -196,6 +214,8 @@ function patternBreakout(candles) {
           stop = orbLow;
           breakLevel = orbHigh;
           orbTraded = true;
+          peakHigh = H[i];
+          nextRung = H[i] * (1 + STEP_PCT);
           tradesToday++;
         } else {
           const cup = findCupBreakout(H, L, C, i);
@@ -214,6 +234,8 @@ function patternBreakout(candles) {
               inTrade = true;
               stop = cup.handleLow;
               breakLevel = cup.rimHigh;
+              peakHigh = H[i];
+              nextRung = H[i] * (1 + STEP_PCT);
               tradesToday++;
             }
           }
@@ -226,7 +248,14 @@ function patternBreakout(candles) {
         signal = "REENTER";
         reason = `Resurrection: close back above breakout level ${breakLevel.toFixed(2)}`;
       }
+      if (signal === "WAIT" && ladder) {
+        signal = "REENTER";
+        reason = `Ladder: close ${C[i].toFixed(2)} above +${STEP_PCT * 100}% rung ${nextRung.toFixed(2)} (peak ${peakHigh.toFixed(2)})`;
+      }
     }
+
+    // Rung fired → hang the next one off the new peak
+    if (ladder) nextRung = peakHigh * (1 + STEP_PCT);
   }
 
   return {
