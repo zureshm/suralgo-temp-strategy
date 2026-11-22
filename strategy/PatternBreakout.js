@@ -25,7 +25,11 @@
 //   - MAX_TRADES_PER_DAY = 3 entries total (ORB ≤ 1, cup ≤ 2).
 //   - No new entries after NO_ENTRY_AFTER (15:00).
 //   - SELL on stop break, or EOD square-off at EOD_EXIT_MIN (15:20).
-//   - Day change resets inTrade, ORB state, and the counter.
+//   - RESURRECTION (REENTER): the breakout level stays alive for the day.
+//     Any fresh close crossing back above it emits REENTER — the real
+//     position may already be out on its own SL/target, so a reclaim of
+//     the level resurrects the trade. REENTERs don't consume the daily cap.
+//   - Day change resets inTrade, ORB state, level, and the counter.
 // =============================================================================
 
 function timeToMinutes(timeStr) {
@@ -126,7 +130,7 @@ function patternBreakout(candles) {
 
   let day = null;
   let orbHigh = null, orbLow = null, orbSealed = false, orbTraded = false;
-  let inTrade = false, stop = null, tradesToday = 0;
+  let inTrade = false, stop = null, breakLevel = null, tradesToday = 0;
   let lastRim = null;
   let signal = "WAIT", reason = "No pattern";
 
@@ -138,7 +142,7 @@ function patternBreakout(candles) {
     if (d !== day) {
       day = d;
       orbHigh = orbLow = null; orbSealed = false; orbTraded = false;
-      inTrade = false; stop = null; tradesToday = 0;
+      inTrade = false; stop = null; breakLevel = null; tradesToday = 0;
     }
 
     // ── Build the opening range ──
@@ -158,6 +162,12 @@ function patternBreakout(candles) {
     signal = "WAIT";
     reason = "No pattern";
 
+    // Resurrection point: last breakout level, alive for the whole day.
+    // A fresh close crossing back above it = REENTER.
+    const reenter = breakLevel != null
+      && (mins == null || mins < NO_ENTRY_AFTER)
+      && C[i] > breakLevel && C[i - 1] <= breakLevel;
+
     if (inTrade) {
       if (mins != null && mins >= EOD_EXIT_MIN) {
         signal = "SELL";
@@ -167,28 +177,54 @@ function patternBreakout(candles) {
         signal = "SELL";
         reason = `close below pattern stop (${stop.toFixed(2)})`;
         inTrade = false;
+      } else if (reenter) {
+        signal = "REENTER";
+        reason = `Resurrection: close back above breakout level ${breakLevel.toFixed(2)}`;
       }
-    } else if (tradesToday < MAX_TRADES_PER_DAY
-        && (mins == null || mins < NO_ENTRY_AFTER)) {
-      if (!orbTraded && orbHigh != null && mins != null
-          && mins >= ORB_END_MIN && mins <= ORB_ENTRY_CUTOFF
-          && C[i] > orbHigh && C[i - 1] <= orbHigh) {
-        signal = "BUY";
-        reason = `ORB breakout: close above 9:15-9:30 range high ${orbHigh.toFixed(2)}`;
-        inTrade = true;
-        stop = orbLow;
-        orbTraded = true;
-        tradesToday++;
-      } else {
-        const cup = findCupBreakout(H, L, C, i);
-        if (cup) {
-          lastRim = cup.rimHigh;
+    } else {
+      // Fresh patterns FIRST — a new breakout outranks resurrection.
+      // If reenter were checked first, one big candle crossing both the
+      // old level and a new rim would eat the fresh pattern's cross.
+      if (tradesToday < MAX_TRADES_PER_DAY
+          && (mins == null || mins < NO_ENTRY_AFTER)) {
+        if (!orbTraded && orbHigh != null && mins != null
+            && mins >= ORB_END_MIN && mins <= ORB_ENTRY_CUTOFF
+            && C[i] > orbHigh && C[i - 1] <= orbHigh) {
           signal = "BUY";
-          reason = `Cup & handle breakout above rim ${cup.rimHigh.toFixed(2)} (cup ${cup.cupLen} bars, handle ${cup.handleLen})`;
+          reason = `ORB breakout: close above 9:15-9:30 range high ${orbHigh.toFixed(2)}`;
           inTrade = true;
-          stop = cup.handleLow;
+          stop = orbLow;
+          breakLevel = orbHigh;
+          orbTraded = true;
           tradesToday++;
+        } else {
+          const cup = findCupBreakout(H, L, C, i);
+          if (cup) {
+            lastRim = cup.rimHigh;
+            const sameLevel = breakLevel != null
+              && Math.abs(cup.rimHigh - breakLevel) / breakLevel < 0.01;
+            if (sameLevel) {
+              // Same structure re-detected at the armed level — resurrection,
+              // not a new trade
+              signal = "REENTER";
+              reason = `Resurrection: close back above breakout level ${breakLevel.toFixed(2)}`;
+            } else {
+              signal = "BUY";
+              reason = `Cup & handle breakout above rim ${cup.rimHigh.toFixed(2)} (cup ${cup.cupLen} bars, handle ${cup.handleLen})`;
+              inTrade = true;
+              stop = cup.handleLow;
+              breakLevel = cup.rimHigh;
+              tradesToday++;
+            }
+          }
         }
+      }
+      // Resurrection cross — fires only if no fresh pattern fired this bar.
+      // Signal only — do NOT touch inTrade, or the state re-locks and
+      // blocks all fresh patterns till EOD.
+      if (signal === "WAIT" && reenter) {
+        signal = "REENTER";
+        reason = `Resurrection: close back above breakout level ${breakLevel.toFixed(2)}`;
       }
     }
   }
