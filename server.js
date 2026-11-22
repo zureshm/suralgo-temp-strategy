@@ -19,6 +19,8 @@ const { utGptStrategy4: HEIKIN_DINKAN_RE } = require("./strategy/UTGPTStrategy4"
 const { utGptStrategy4X :HEIKIN_CAREFUL_RE } = require("./strategy/UTGPTStrategy4X");
 const { smartBreakout : SMART_BREAKOUT } = require("./strategy/SmartBreakout");
 const { patternBreakout : PATTERN_BREAKOUT } = require("./strategy/PatternBreakout");
+const { ascendingTriangle : ASCENDING_TRIANGLE_BREAKOUT } = require("./strategy/AscendingTriangle");
+const { bullFlag : BULL_FLAG_BREAKOUT } = require("./strategy/BullFlag");
 
 const app = express();
 
@@ -93,6 +95,8 @@ const strategies = {
   HEIKIN_SMARTTHOMMAN_RE,
   SMART_BREAKOUT,
   PATTERN_BREAKOUT,
+  ASCENDING_TRIANGLE_BREAKOUT,
+  BULL_FLAG_BREAKOUT,
 };
 
 // Active strategy (default)
