@@ -271,4 +271,12 @@ function patternBreakout(candles) {
   };
 }
 
-module.exports = { patternBreakout };
+module.exports = {
+  patternBreakout,
+  findCupBreakout,
+  timeToMinutes,
+  ORB_START_MIN,
+  ORB_END_MIN,
+  ORB_ENTRY_CUTOFF,
+  ORB_MAX_RANGE_PCT
+};

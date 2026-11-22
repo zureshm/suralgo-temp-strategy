@@ -1,42 +1,43 @@
 // =============================================================================
-// claudSurStrategy (copy of utGptStrategy2) — Sumesh UT Bot on Heikin-Ashi candles
+// claudSurStrategy — HYBRID: PatternBreakout entries + indicator re-entries
 //
-// Same signal engine as SumeshStrategy. GREEN is computed on NORMAL candles,
-// while INFRAGREEN and all EMA/WMA gates are on Heikin-Ashi candles.
+// BUY comes from PatternBreakout's pattern engine (imported below):
+//   - ORB: first close above the 09:15–09:29 range high (once/day, ≤11:30,
+//     range ≤8%), stop = range low.
+//   - Cup & handle: rolling detector on NORMAL candles, fresh close above
+//     the rim, stop = handle low.
+//   - MAX_TRADES_PER_DAY = 3, no new entries after 15:00.
 //
-// INDICATORS & CONFIGURATION:
+// REENTER comes from this file's original BUY-condition flips, demoted to
+// re-entry signals and armed ONLY after the day's first pattern BUY:
+//   - PALEGREEN (K1.5/ATR10, normal) flips bullish +
+//     10EMA>30EMA + WMA30>WMA60 + 10EMA rising(3) + WMA30<10EMA +
+//     candle fully above WMA30.
+//   - INFRAGREEN (K0.8/ATR10, HA) flips bullish while GREEN bullish +
+//     10EMA>30EMA + WMA30>WMA60 + 10EMA rising(5) +
+//     WMA30<10EMA + candle fully above WMA30.
+//   REENTER never touches inTrade — it is a signal for the execution layer.
+//
+// SELL is pattern-side only: close below the pattern stop, or EOD
+// square-off at 15:20. (The old GREEN-flip SELL is gone.)
+//
+// INDICATORS & CONFIGURATION (unchanged):
 //   - GREEN (UT Bot 1): Key Value = 2, ATR Period = 10 (on NORMAL candles)
 //   - PALEGREEN (UT Bot): Key Value = 1.5, ATR Period = 10 (on NORMAL candles)
 //   - INFRAGREEN (UT Bot 2): Key Value = 0.8, ATR Period = 10 (on HA candles)
-//   - 10EMA / 30EMA on HA close
-//   - WMA30 / WMA60 on HA close
-//   - SRMA (Sentiment Range MA, ChartPrime defaults) on normal candles —
-//     replaces the VWAP gate for buy-side signals
-//   - Candles are converted to Heikin-Ashi for INFRAGREEN + EMA/WMA gates
-//
-// BUY (CYAN): CYAN (UT Bot, Key=2, ATR=200, HA candles) flips bullish,
-//          only for candles between 9:15 and 10:00, AND only while 10EMA > 30EMA (HA).
-// SELL:    GREEN flips bearish.
-// BUY (PALEGREEN): PALEGREEN bullish flip with price above SRMA,
-//          10EMA>30EMA, 10EMA rising vs 3 candles ago, WMA30>WMA60,
-//          WMA30 below 10EMA, candle fully above WMA30 (neither wick nor body touching it).
-// BUY (INFRAGREEN): GREEN already bullish AND INFRAGREEN flips bullish,
-//          AND price (normal close) above SRMA,
-//          AND 10EMA already above 30EMA (upward cross has occurred),
-//          AND 10EMA rising vs 5 candles ago,
-//          AND WMA30 above WMA60 (already crossed upwards),
-//          AND WMA30 below 10EMA,
-//          AND candle fully above WMA30 (neither wick nor body touching it).
-// REENTER: GREEN already bullish AND INFRAGREEN flips bullish,
-//          AND price (normal close) above SRMA,
-//          AND 10EMA already above 30EMA (upward cross has occurred),
-//          AND 10EMA rising vs 5 candles ago,
-//          AND WMA30 above WMA60 (already crossed upwards),
-//          AND WMA30 below 10EMA,
-//          AND candle fully above WMA30 (neither wick nor body touching it).
-//          (BUY/SELL logic untouched — REENTER is an additional signal only.)
-//
+//   - CYAN (UT Bot): Key Value = 2, ATR Period = 200 (on HA candles)
+//   - 10EMA / 30EMA, WMA30 / WMA60 on HA close
+//   - SRMA (Sentiment Range MA, ChartPrime defaults) on normal candles
 // =============================================================================
+
+const {
+  findCupBreakout,
+  timeToMinutes,
+  ORB_START_MIN,
+  ORB_END_MIN,
+  ORB_ENTRY_CUTOFF,
+  ORB_MAX_RANGE_PCT
+} = require("./PatternBreakout");
 
 // ── Indicator helpers ────────────────────────────────────────────────────────
 
@@ -247,115 +248,190 @@ function inCyanWindow(time) {
   return mins >= 9 * 60 + 15 && mins <= 10 * 60;
 }
 
-// ── Main strategy ────────────────────────────────────────────────────────────
+// ── Main strategy — hybrid ───────────────────────────────────────────────────
+// BUY:    PatternBreakout's pattern engine (ORB + cup & handle)
+// REENTER: this file's old BUY-condition flips (CYAN/PALEGREEN/INFRAGREEN),
+//          armed only after the day's first pattern BUY
+// SELL:   pattern stop or 15:20 EOD only
 
-// 10EMA rising lookback for REENTER (candles ago), same as DINKAN/TOMMAN
+const NO_ENTRY_AFTER = 15 * 60;      // no new entries after 15:00
+const EOD_EXIT_MIN = 15 * 60 + 20;   // square-off 15:20
+const MAX_TRADES_PER_DAY = 3;
 const REENTER_EMA_LOOKBACK = 5;
 const PALEGREEN_EMA_LOOKBACK = 3;
 
 function claudSurStrategy(candles) {
-  if (!candles || candles.length < 50) {
-    return { signal: "WAIT", reason: "Not enough data (need 50+)" };
+  if (!candles || candles.length < 20) {
+    return { signal: "WAIT", reason: "Not enough data (need 20+)" };
   }
 
-  // ── Convert to Heikin-Ashi ──
-  const ha = [];
-  for (let i = 0; i < candles.length; i++) {
-    const o = Number(candles[i].open);
-    const h = Number(candles[i].high);
-    const l = Number(candles[i].low);
-    const c = Number(candles[i].close);
-    const haClose = (o + h + l + c) / 4;
-    const haOpen  = i === 0 ? (o + c) / 2 : (ha[i - 1].open + ha[i - 1].close) / 2;
-    const haHigh  = Math.max(h, haOpen, haClose);
-    const haLow   = Math.min(l, haOpen, haClose);
-    ha.push({ open: haOpen, high: haHigh, low: haLow, close: haClose });
-  }
-
-  const H = ha.map(c => c.high);
-  const L = ha.map(c => c.low);
-  const C = ha.map(c => c.close);
-  const N = C.length;
-
-  // GREEN & PALEGREEN on normal candles; INFRAGREEN on Heikin-Ashi
+  const N = candles.length;
   const nO = candles.map(c => Number(c.open));
   const nH = candles.map(c => Number(c.high));
   const nL = candles.map(c => Number(c.low));
   const nC = candles.map(c => Number(c.close));
 
-  const green = utBotSeries(nH, nL, nC, 2, 10);       // GREEN on normal candles (Key=2, ATR=10)
-  const palegreen = utBotSeries(nH, nL, nC, 1.5, 10); // PALEGREEN on normal candles (Key=1.5, ATR=10)
-  const infraGreen = utBotSeries(H, L, C, 0.8, 10);   // INFRAGREEN on HA (Key=0.8, ATR=10)
+  // ── Heikin-Ashi series (INFRAGREEN + EMA/WMA gates) ──
+  const ha = [];
+  for (let i = 0; i < N; i++) {
+    const haClose = (nO[i] + nH[i] + nL[i] + nC[i]) / 4;
+    const haOpen  = i === 0 ? (nO[i] + nC[i]) / 2 : (ha[i - 1].open + ha[i - 1].close) / 2;
+    ha.push({
+      open: haOpen,
+      high: Math.max(nH[i], haOpen, haClose),
+      low:  Math.min(nL[i], haOpen, haClose),
+      close: haClose
+    });
+  }
+  const H = ha.map(c => c.high);
+  const L = ha.map(c => c.low);
+  const C = ha.map(c => c.close);
 
-  const cyan = utBotSeries(H, L, C, 2, 200);       // CYAN on HA (Key=2, ATR=200)
+  // Indicator series — GREEN & PALEGREEN on normal candles; INFRAGREEN & CYAN on HA
+  const green = utBotSeries(nH, nL, nC, 2, 10);       // GREEN (Key=2, ATR=10)
+  const palegreen = utBotSeries(nH, nL, nC, 1.5, 10); // PALEGREEN (Key=1.5, ATR=10)
+  const infraGreen = utBotSeries(H, L, C, 0.8, 10);   // INFRAGREEN (Key=0.8, ATR=10)
+  const cyan = utBotSeries(H, L, C, 2, 200);          // CYAN (Key=2, ATR=200)
 
-  const ema10 = emaSeries(C, 10); // 10EMA on HA close
-  const ema30 = emaSeries(C, 30); // 30EMA on HA close
+  const ema10 = emaSeries(C, 10);
+  const ema30 = emaSeries(C, 30);
+  const wma30 = wmaSeries(C, 30);
+  const wma60 = wmaSeries(C, 60);
+  const srma = sentimentRangeMA(nO, nH, nL, nC);
 
-  const wma30 = wmaSeries(C, 30); // WMA30 on HA close
-  const wma60 = wmaSeries(C, 60); // WMA60 on HA close
+  // ── Pattern state (PatternBreakout's model — replay the whole array) ──
+  let day = null;
+  let orbHigh = null, orbLow = null, orbSealed = false, orbTraded = false;
+  let inTrade = false, stop = null, tradesToday = 0;
+  let lastRim = null;
+  let signal = "WAIT", reason = "No pattern";
 
-  const srma = sentimentRangeMA(nO, nH, nL, nC); // SRMA on normal candles (frontend defaults)
+  for (let i = 1; i < N; i++) {
+    const t = candles[i].time;
+    const d = t != null ? String(t).slice(0, 10) : null;
+    const mins = timeToMinutes(t);
 
-  const i = N - 1;
-  let signal = "WAIT";
-  let reason = "No flip";
+    if (d !== day) {
+      day = d;
+      orbHigh = orbLow = null; orbSealed = false; orbTraded = false;
+      inTrade = false; stop = null; tradesToday = 0;
+    }
 
-  if (green.pos[i] === -1 && green.pos[i - 1] !== -1) {
-    signal = "SELL";
-    reason = "GREEN flipped bearish (normal candles)";
-  } else if (cyan.pos[i] === 1 && cyan.pos[i - 1] !== 1 && inCyanWindow(candles[i].time) && ema10[i] != null && ema30[i] != null && ema10[i] > ema30[i]) {
-    signal = "BUY";
-    reason = "CYAN flipped bullish (K2/ATR200, Heikin-Ashi) within 9:15-10:00 while 10EMA>30EMA";
-  } else {
-    // ── REENTER & Extra BUY gates ──
-    const paleGreenFlipBuy = palegreen.pos[i] === 1 && palegreen.pos[i - 1] !== 1;
-    const infraGreenFlipBuy = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
-    const emaCrossedUp = ema10[i] != null && ema30[i] != null && ema10[i] > ema30[i];
-    const ema10Rising = i >= REENTER_EMA_LOOKBACK
-      && ema10[i] != null && ema10[i - REENTER_EMA_LOOKBACK] != null
-      && ema10[i] > ema10[i - REENTER_EMA_LOOKBACK];
-    const ema10Rising3 = i >= PALEGREEN_EMA_LOOKBACK
-      && ema10[i] != null && ema10[i - PALEGREEN_EMA_LOOKBACK] != null
-      && ema10[i] > ema10[i - PALEGREEN_EMA_LOOKBACK];
-    const wmaCrossedUp = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
-    const closeAboveSrma = srma.ma[i] != null && nC[i] > srma.ma[i]; // normal close above SRMA
+    // ── Build the opening range (normal candles) ──
+    if (!orbSealed && mins != null) {
+      if (mins >= ORB_START_MIN && mins < ORB_END_MIN) {
+        orbHigh = orbHigh == null ? nH[i] : Math.max(orbHigh, nH[i]);
+        orbLow  = orbLow  == null ? nL[i] : Math.min(orbLow,  nL[i]);
+      } else if (mins >= ORB_END_MIN) {
+        orbSealed = true;
+        if (orbHigh == null || orbLow == null || orbHigh <= orbLow
+            || (orbHigh - orbLow) / orbLow > ORB_MAX_RANGE_PCT) {
+          orbHigh = orbLow = null; // invalid range → no ORB today
+        }
+      }
+    }
 
-    // ── Extra gates (WMA30<10EMA + no WMA30 touch) ──
-    const wma30UnderEma10 = wma30[i] != null && ema10[i] != null && wma30[i] < ema10[i];
-    const clearOfWma30 = wma30[i] != null && ha[i].low > wma30[i]; // wick+body fully above WMA30
+    signal = "WAIT";
+    reason = "No pattern";
 
-    if (paleGreenFlipBuy && closeAboveSrma && emaCrossedUp && wmaCrossedUp && ema10Rising3 && wma30UnderEma10 && clearOfWma30) {
-      signal = "BUY";
-      reason = "PALEGREEN flip bullish above SRMA (K1.5/ATR10, normal candles) → BUY, 10EMA>30EMA rising, WMA30<10EMA, candle clear of WMA30 (HA)";
-    } else if (green.pos[i] === 1 && infraGreenFlipBuy && closeAboveSrma && emaCrossedUp && wmaCrossedUp) {
-      if (ema10Rising && wma30UnderEma10 && clearOfWma30) {
-        signal = "BUY";
-        reason = "INFRAGREEN flip bullish above SRMA (K0.8/ATR10) → BUY while GREEN bullish, 10EMA>30EMA rising, WMA30<10EMA, candle clear of WMA30 (HA)";
-      } else if (ema10Rising && wma30UnderEma10 && clearOfWma30) {
+    // ── Indicator REENTER conditions at bar i — the old BUY logic, demoted.
+    // Armed only after the day's first pattern BUY (tradesToday > 0).
+    let reenterReason = null;
+    if (tradesToday > 0 && (mins == null || mins < NO_ENTRY_AFTER)) {
+      const paleGreenFlipBuy = palegreen.pos[i] === 1 && palegreen.pos[i - 1] !== 1;
+      const infraGreenFlipBuy = infraGreen.pos[i] === 1 && infraGreen.pos[i - 1] !== 1;
+      const emaCrossedUp = ema10[i] != null && ema30[i] != null && ema10[i] > ema30[i];
+      const ema10Rising = i >= REENTER_EMA_LOOKBACK
+        && ema10[i] != null && ema10[i - REENTER_EMA_LOOKBACK] != null
+        && ema10[i] > ema10[i - REENTER_EMA_LOOKBACK];
+      const ema10Rising3 = i >= PALEGREEN_EMA_LOOKBACK
+        && ema10[i] != null && ema10[i - PALEGREEN_EMA_LOOKBACK] != null
+        && ema10[i] > ema10[i - PALEGREEN_EMA_LOOKBACK];
+      const wmaCrossedUp = wma30[i] != null && wma60[i] != null && wma30[i] > wma60[i];
+      const wma30UnderEma10 = wma30[i] != null && ema10[i] != null && wma30[i] < ema10[i];
+      const clearOfWma30 = wma30[i] != null && ha[i].low > wma30[i];
+
+      if (paleGreenFlipBuy && emaCrossedUp && wmaCrossedUp
+          && ema10Rising3 && wma30UnderEma10 && clearOfWma30) {
+        reenterReason = "PALEGREEN flip bullish (K1.5/ATR10, normal candles), 10EMA>30EMA rising, WMA30<10EMA, candle clear of WMA30 (HA)";
+      } else if (green.pos[i] === 1 && infraGreenFlipBuy && emaCrossedUp
+                 && wmaCrossedUp && ema10Rising && wma30UnderEma10 && clearOfWma30) {
+        reenterReason = "INFRAGREEN flip bullish (K0.8/ATR10) while GREEN bullish, 10EMA>30EMA rising, WMA30<10EMA, candle clear of WMA30 (HA)";
+      }
+    }
+
+    if (inTrade) {
+      if (mins != null && mins >= EOD_EXIT_MIN) {
+        signal = "SELL";
+        reason = "EOD square-off at 15:20";
+        inTrade = false;
+      } else if (nC[i] <= stop) {
+        signal = "SELL";
+        reason = `close below pattern stop (${stop.toFixed(2)})`;
+        inTrade = false;
+      } else if (reenterReason) {
         signal = "REENTER";
-        reason = "INFRAGREEN flip bullish above SRMA (K0.8/ATR10) while GREEN bullish, 10EMA>30EMA rising, WMA30>WMA60, WMA30<10EMA, candle clear of WMA30 (HA)";
+        reason = reenterReason;
+      }
+    } else {
+      // Fresh patterns FIRST — a new breakout outranks a re-entry signal.
+      if (tradesToday < MAX_TRADES_PER_DAY
+          && (mins == null || mins < NO_ENTRY_AFTER)) {
+        if (!orbTraded && orbHigh != null && mins != null
+            && mins >= ORB_END_MIN && mins <= ORB_ENTRY_CUTOFF
+            && nC[i] > orbHigh && nC[i - 1] <= orbHigh) {
+          signal = "BUY";
+          reason = `ORB breakout: close above 9:15-9:30 range high ${orbHigh.toFixed(2)}`;
+          inTrade = true;
+          stop = orbLow;
+          orbTraded = true;
+          tradesToday++;
+        } else {
+          const cup = findCupBreakout(nH, nL, nC, i);
+          if (cup) {
+            lastRim = cup.rimHigh;
+            signal = "BUY";
+            reason = `Cup & handle breakout above rim ${cup.rimHigh.toFixed(2)} (cup ${cup.cupLen} bars, handle ${cup.handleLen})`;
+            inTrade = true;
+            stop = cup.handleLow;
+            tradesToday++;
+          }
+        }
+      }
+      // Re-entry — fires only if no fresh pattern fired this bar.
+      // Signal only — do NOT touch inTrade, or the state re-locks and
+      // blocks all fresh patterns till EOD.
+      if (signal === "WAIT" && reenterReason) {
+        signal = "REENTER";
+        reason = reenterReason;
       }
     }
   }
 
+  const last = N - 1;
   return {
     signal,
     reason,
-    greenPos: green.pos[i],
-    greenTrail: green.trail[i],
-    palegreenPos: palegreen.pos[i],
-    palegreenTrail: palegreen.trail[i],
-    cyanPos: cyan.pos[i],
-    cyanTrail: cyan.trail[i],
-    infraGreenPos: infraGreen.pos[i],
-    infraGreenTrail: infraGreen.trail[i],
-    srma: srma.ma[i],
-    ema10: ema10[i],
-    ema30: ema30[i],
-    wma30: wma30[i],
-    wma60: wma60[i],
-    close: C[i]
+    inTrade,
+    stop,
+    tradesToday,
+    orbHigh,
+    orbLow,
+    rim: lastRim,
+    greenPos: green.pos[last],
+    greenTrail: green.trail[last],
+    palegreenPos: palegreen.pos[last],
+    palegreenTrail: palegreen.trail[last],
+    cyanPos: cyan.pos[last],
+    cyanTrail: cyan.trail[last],
+    infraGreenPos: infraGreen.pos[last],
+    infraGreenTrail: infraGreen.trail[last],
+    srma: srma.ma[last],
+    ema10: ema10[last],
+    ema30: ema30[last],
+    wma30: wma30[last],
+    wma60: wma60[last],
+    close: nC[last]
   };
 }
 
