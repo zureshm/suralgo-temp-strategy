@@ -104,19 +104,26 @@ function ascendingTriangle(candles) {
   let inTrade = false, stop = null, breakLevel = null, tradesToday = 0;
   let peakHigh = null;   // highest high since the last entry
   let nextRung = null;   // peakHigh × (1 + STEP_PCT) — next ladder trigger
+  let reexitLevel = null; // frozen exit line for an open REENTER (peak at fire time − STEP_PCT)
   let lastLevel = null;
   let signal = "WAIT", reason = "No pattern";
 
+  let prevMins = null;
   for (let i = 1; i < N; i++) {
     const t = candles[i].time;
-    const d = t != null ? String(t).slice(0, 10) : null;
+    const ts = t != null ? String(t) : "";
+    const hasDate = /\d{4}-\d{2}-\d{2}/.test(ts);
+    const d = hasDate ? ts.slice(0, 10) : "session";
     const mins = timeToMinutes(t);
 
-    if (d !== day) {
+    // New day: the date changed. Time-only feeds (backtest CSVs) wrap instead
+    // (15:29 → 09:15) — datetime feeds never use the wrap check.
+    if (d !== day || (!hasDate && mins != null && prevMins != null && mins < prevMins)) {
       day = d;
       inTrade = false; stop = null; breakLevel = null; tradesToday = 0;
-      peakHigh = null; nextRung = null;
+      peakHigh = null; nextRung = null; reexitLevel = null;
     }
+    prevMins = mins;
 
     signal = "WAIT";
     reason = "No pattern";
@@ -130,6 +137,9 @@ function ascendingTriangle(candles) {
       && C[i] > nextRung
       && green.pos[i] === 1;
 
+    // REEXIT: an open ladder REENTER exits on a close below its frozen line
+    const reexit = reexitLevel != null && C[i] < reexitLevel;
+
     if (inTrade) {
       if (mins != null && mins >= EOD_EXIT_MIN) {
         signal = "SELL";
@@ -139,6 +149,9 @@ function ascendingTriangle(candles) {
         signal = "SELL";
         reason = `close below pattern stop (${stop.toFixed(2)})`;
         inTrade = false;
+      } else if (reexit) {
+        signal = "REEXIT";
+        reason = `close ${C[i].toFixed(2)} below frozen exit ${reexitLevel.toFixed(2)} (peak at REENTER −5%)`;
       } else if (ladder) {
         signal = "REENTER";
         reason = `Ladder: close ${C[i].toFixed(2)} above +${STEP_PCT * 100}% rung ${nextRung.toFixed(2)} (peak ${peakHigh.toFixed(2)})`;
@@ -169,7 +182,10 @@ function ascendingTriangle(candles) {
           }
         }
       }
-      if (signal === "WAIT" && ladder) {
+      if (signal === "WAIT" && reexit) {
+        signal = "REEXIT";
+        reason = `close ${C[i].toFixed(2)} below frozen exit ${reexitLevel.toFixed(2)} (peak at REENTER −5%)`;
+      } else if (signal === "WAIT" && ladder) {
         signal = "REENTER";
         reason = `Ladder: close ${C[i].toFixed(2)} above +${STEP_PCT * 100}% rung ${nextRung.toFixed(2)} (peak ${peakHigh.toFixed(2)})`;
       }
@@ -177,6 +193,9 @@ function ascendingTriangle(candles) {
 
     // Rung fired → hang the next one off the new peak
     if (ladder) nextRung = peakHigh * (1 + STEP_PCT);
+    // REENTER opens → freeze its exit line at peak − 5%; REEXIT/SELL closes it
+    if (signal === "REENTER") reexitLevel = peakHigh * (1 - STEP_PCT);
+    if (signal === "REEXIT" || signal === "SELL") reexitLevel = null;
   }
 
   return {
