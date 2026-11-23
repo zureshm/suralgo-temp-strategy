@@ -163,8 +163,7 @@ function bullFlag(candles) {
       // Fresh patterns FIRST — a new breakout outranks resurrection.
       // If reenter were checked first, one big candle crossing both the
       // old level and a new flag top would eat the fresh pattern's cross.
-      if (tradesToday < MAX_TRADES_PER_DAY
-          && (mins == null || mins < NO_ENTRY_AFTER)) {
+      if (mins == null || mins < NO_ENTRY_AFTER) {
         const flag = findFlagBreakout(H, L, C, i);
         if (flag) {
           lastLevel = flag.flagHigh;

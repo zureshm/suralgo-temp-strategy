@@ -21,6 +21,7 @@ const { smartBreakout : SMART_BREAKOUT } = require("./strategy/SmartBreakout");
 const { patternBreakout : PATTERN_BREAKOUT } = require("./strategy/PatternBreakout");
 const { ascendingTriangle : ASCENDING_TRIANGLE_BREAKOUT } = require("./strategy/AscendingTriangle");
 const { bullFlag : BULL_FLAG_BREAKOUT } = require("./strategy/BullFlag");
+const { doubleBottom : DOUBLE_BOTTOM_BREAKOUT } = require("./strategy/DoubleBottom");
 
 const app = express();
 
@@ -97,6 +98,7 @@ const strategies = {
   PATTERN_BREAKOUT,
   ASCENDING_TRIANGLE_BREAKOUT,
   BULL_FLAG_BREAKOUT,
+  DOUBLE_BOTTOM_BREAKOUT,
 };
 
 // Active strategy (default)

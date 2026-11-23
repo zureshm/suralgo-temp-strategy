@@ -264,8 +264,7 @@ function patternBreakout(candles) {
       // Fresh patterns FIRST — a new breakout outranks resurrection.
       // If reenter were checked first, one big candle crossing both the
       // old level and a new rim would eat the fresh pattern's cross.
-      if (tradesToday < MAX_TRADES_PER_DAY
-          && (mins == null || mins < NO_ENTRY_AFTER)) {
+      if (mins == null || mins < NO_ENTRY_AFTER) {
         if (!orbTraded && orbHigh != null && mins != null
             && mins >= ORB_END_MIN && mins <= ORB_ENTRY_CUTOFF
             && C[i] > orbHigh && C[i - 1] <= orbHigh) {
