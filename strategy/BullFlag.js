@@ -104,7 +104,7 @@ function bullFlag(candles) {
   const green = utBotSeries(H, L, C, 2, 10);   // GREEN UT Bot (Key=2, ATR=10) — gates ladder REENTERs
 
   let day = null;
-  let inTrade = false, stop = null, breakLevel = null, tradesToday = 0;
+  let inTrade = false, stop = null, breakLevel = null, tradesToday = 0, entryPrice = null;
   let peakHigh = null;   // highest high since the last entry
   let nextRung = null;   // peakHigh × (1 + STEP_PCT) — next ladder trigger
   let reexitLevel = null; // frozen exit line for an open REENTER (peak at fire time − STEP_PCT)
@@ -119,11 +119,10 @@ function bullFlag(candles) {
     const d = hasDate ? ts.slice(0, 10) : "session";
     const mins = timeToMinutes(t);
 
-    // New day: the date changed. Time-only feeds (backtest CSVs) wrap instead
-    // (15:29 → 09:15) — datetime feeds never use the wrap check.
-    if (d !== day || (!hasDate && mins != null && prevMins != null && mins < prevMins)) {
+    // New session: date changed or time jumped back > 60 min (15:29 → 09:15)
+    if (d !== day || (mins != null && prevMins != null && mins < prevMins - 60)) {
       day = d;
-      inTrade = false; stop = null; breakLevel = null; tradesToday = 0;
+      inTrade = false; stop = null; breakLevel = null; tradesToday = 0; entryPrice = null;
       peakHigh = null; nextRung = null; reexitLevel = null;
     }
     prevMins = mins;
@@ -144,11 +143,22 @@ function bullFlag(candles) {
     const reexit = reexitLevel != null && C[i] < reexitLevel;
 
     if (inTrade) {
+      const hardStop = entryPrice != null ? entryPrice * 0.95 : stop;
+      const softStop = breakLevel != null && C[i] < breakLevel && C[i - 1] < breakLevel;
+
       if (mins != null && mins >= EOD_EXIT_MIN) {
         signal = "SELL";
         reason = "EOD square-off at 15:20";
         inTrade = false;
-      } else if (C[i] <= stop) {
+      } else if (hardStop != null && C[i] <= hardStop) {
+        signal = "SELL";
+        reason = `hard stop hit: close ${C[i].toFixed(2)} <= -5% floor (${hardStop.toFixed(2)})`;
+        inTrade = false;
+      } else if (softStop) {
+        signal = "SELL";
+        reason = `breakout failure: 2 closes below level ${breakLevel.toFixed(2)} (${C[i].toFixed(2)})`;
+        inTrade = false;
+      } else if (stop != null && C[i] <= stop) {
         signal = "SELL";
         reason = `close below flag low (${stop.toFixed(2)})`;
         inTrade = false;
@@ -164,22 +174,30 @@ function bullFlag(candles) {
       // If reenter were checked first, one big candle crossing both the
       // old level and a new flag top would eat the fresh pattern's cross.
       if (mins == null || mins < NO_ENTRY_AFTER) {
-        const flag = findFlagBreakout(H, L, C, i);
+        const flag1 = i >= 2 ? findFlagBreakout(H, L, C, i - 1) : null;
+        const flag2 = !flag1 && i >= 3 ? findFlagBreakout(H, L, C, i - 2) : null;
+        let flag = null;
+        if (flag1) {
+          const req = flag1.flagHigh + Math.max(5, flag1.flagHigh * 0.03);
+          if (C[i] > flag1.flagHigh && (C[i - 1] >= req || C[i] >= req)) flag = flag1;
+        } else if (flag2) {
+          const req = flag2.flagHigh + Math.max(5, flag2.flagHigh * 0.03);
+          if (C[i - 1] > flag2.flagHigh && C[i] > flag2.flagHigh && C[i] >= req) flag = flag2;
+        }
+
         if (flag) {
           lastLevel = flag.flagHigh;
           const sameLevel = breakLevel != null
             && Math.abs(flag.flagHigh - breakLevel) / breakLevel < 0.01;
-          if (sameLevel) {
-            // Same structure re-detected at the old level — not a new
-            // trade, and resurrection is disabled, so emit nothing.
-          } else {
+          if (!sameLevel) {
             signal = "BUY";
-            reason = `Bull flag breakout above ${flag.flagHigh.toFixed(2)} (pole ${flag.poleLen} bars +${(flag.gainPct * 100).toFixed(0)}%, flag ${flag.flagLen}, stop ${flag.flagLow.toFixed(2)})`;
+            reason = `Bull flag breakout above ${flag.flagHigh.toFixed(2)} (pole ${flag.poleLen} bars +${(flag.gainPct * 100).toFixed(0)}%, flag ${flag.flagLen}, confirmed push)`;
             inTrade = true;
+            entryPrice = C[i];
             stop = flag.flagLow;
             breakLevel = flag.flagHigh;
-            peakHigh = H[i];
-            nextRung = H[i] * (1 + STEP_PCT);
+            peakHigh = Math.max(H[i], H[i - 1]);
+            nextRung = peakHigh * (1 + STEP_PCT);
             tradesToday++;
           }
         }

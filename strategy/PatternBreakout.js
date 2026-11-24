@@ -190,7 +190,7 @@ function patternBreakout(candles) {
 
   let day = null;
   let orbHigh = null, orbLow = null, orbSealed = false, orbTraded = false;
-  let inTrade = false, stop = null, breakLevel = null, tradesToday = 0;
+  let inTrade = false, stop = null, breakLevel = null, tradesToday = 0, entryPrice = null;
   let peakHigh = null;   // highest high since the last entry
   let nextRung = null;   // peakHigh × (1 + STEP_PCT) — next ladder trigger
   let reexitLevel = null; // frozen exit line for an open REENTER (peak at fire time − STEP_PCT)
@@ -205,12 +205,11 @@ function patternBreakout(candles) {
     const d = hasDate ? ts.slice(0, 10) : "session";
     const mins = timeToMinutes(t);
 
-    // New day: the date changed. Time-only feeds (backtest CSVs) wrap instead
-    // (15:29 → 09:15) — datetime feeds never use the wrap check.
-    if (d !== day || (!hasDate && mins != null && prevMins != null && mins < prevMins)) {
+    // New session: date changed or time jumped back > 60 min (15:29 → 09:15)
+    if (d !== day || (mins != null && prevMins != null && mins < prevMins - 60)) {
       day = d;
       orbHigh = orbLow = null; orbSealed = false; orbTraded = false;
-      inTrade = false; stop = null; breakLevel = null; tradesToday = 0;
+      inTrade = false; stop = null; breakLevel = null; tradesToday = 0; entryPrice = null;
       peakHigh = null; nextRung = null; reexitLevel = null;
     }
     prevMins = mins;
@@ -245,11 +244,22 @@ function patternBreakout(candles) {
     const reexit = reexitLevel != null && C[i] < reexitLevel;
 
     if (inTrade) {
+      const hardStop = entryPrice != null ? entryPrice * 0.95 : stop;
+      const softStop = breakLevel != null && C[i] < breakLevel && C[i - 1] < breakLevel;
+
       if (mins != null && mins >= EOD_EXIT_MIN) {
         signal = "SELL";
         reason = "EOD square-off at 15:20";
         inTrade = false;
-      } else if (C[i] <= stop) {
+      } else if (hardStop != null && C[i] <= hardStop) {
+        signal = "SELL";
+        reason = `hard stop hit: close ${C[i].toFixed(2)} <= -5% floor (${hardStop.toFixed(2)})`;
+        inTrade = false;
+      } else if (softStop) {
+        signal = "SELL";
+        reason = `breakout failure: 2 closes below level ${breakLevel.toFixed(2)} (${C[i].toFixed(2)})`;
+        inTrade = false;
+      } else if (stop != null && C[i] <= stop) {
         signal = "SELL";
         reason = `close below pattern stop (${stop.toFixed(2)})`;
         inTrade = false;
@@ -265,35 +275,49 @@ function patternBreakout(candles) {
       // If reenter were checked first, one big candle crossing both the
       // old level and a new rim would eat the fresh pattern's cross.
       if (mins == null || mins < NO_ENTRY_AFTER) {
+        const orbPush = orbHigh != null ? Math.max(5, orbHigh * 0.03) : 0;
+        const orbReq = orbHigh != null ? orbHigh + orbPush : Infinity;
+        const orb1 = i >= 2 && C[i - 1] > orbHigh && C[i - 2] <= orbHigh && C[i] > orbHigh && (C[i - 1] >= orbReq || C[i] >= orbReq);
+        const orb2 = !orb1 && i >= 3 && C[i - 2] > orbHigh && C[i - 3] <= orbHigh && C[i - 1] > orbHigh && C[i] >= orbReq;
+
         if (!orbTraded && orbHigh != null && mins != null
             && mins >= ORB_END_MIN && mins <= ORB_ENTRY_CUTOFF
-            && C[i] > orbHigh && C[i - 1] <= orbHigh) {
+            && (orb1 || orb2)) {
           signal = "BUY";
-          reason = `ORB breakout: close above 9:15-9:30 range high ${orbHigh.toFixed(2)}`;
+          reason = `ORB breakout: close above 9:15-9:30 range high ${orbHigh.toFixed(2)} (confirmed push)`;
           inTrade = true;
+          entryPrice = C[i];
           stop = orbLow;
           breakLevel = orbHigh;
           orbTraded = true;
-          peakHigh = H[i];
-          nextRung = H[i] * (1 + STEP_PCT);
+          peakHigh = Math.max(H[i], H[i - 1]);
+          nextRung = peakHigh * (1 + STEP_PCT);
           tradesToday++;
         } else {
-          const cup = findCupBreakout(H, L, C, i);
+          const cup1 = i >= 2 ? findCupBreakout(H, L, C, i - 1) : null;
+          const cup2 = !cup1 && i >= 3 ? findCupBreakout(H, L, C, i - 2) : null;
+          let cup = null;
+          if (cup1) {
+            const req = cup1.rimHigh + Math.max(5, cup1.rimHigh * 0.03);
+            if (C[i] > cup1.rimHigh && (C[i - 1] >= req || C[i] >= req)) cup = cup1;
+          } else if (cup2) {
+            const req = cup2.rimHigh + Math.max(5, cup2.rimHigh * 0.03);
+            if (C[i - 1] > cup2.rimHigh && C[i] > cup2.rimHigh && C[i] >= req) cup = cup2;
+          }
+
           if (cup) {
             lastRim = cup.rimHigh;
             const sameLevel = breakLevel != null
               && Math.abs(cup.rimHigh - breakLevel) / breakLevel < 0.01;
-            if (sameLevel) {
-              // Same cup re-detected at the old level — not a new trade,
-              // and resurrection is disabled, so emit nothing.
-            } else {
+            if (!sameLevel) {
               signal = "BUY";
-              reason = `Cup & handle breakout above rim ${cup.rimHigh.toFixed(2)} (cup ${cup.cupLen} bars, handle ${cup.handleLen})`;
+              reason = `Cup & handle breakout above rim ${cup.rimHigh.toFixed(2)} (cup ${cup.cupLen} bars, confirmed push)`;
               inTrade = true;
+              entryPrice = C[i];
               stop = cup.handleLow;
               breakLevel = cup.rimHigh;
-              peakHigh = H[i];
-              nextRung = H[i] * (1 + STEP_PCT);
+              peakHigh = Math.max(H[i], H[i - 1]);
+              nextRung = peakHigh * (1 + STEP_PCT);
               tradesToday++;
             }
           }

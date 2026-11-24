@@ -101,7 +101,7 @@ function ascendingTriangle(candles) {
   const green = utBotSeries(H, L, C, 2, 10);   // GREEN UT Bot (Key=2, ATR=10) — gates ladder REENTERs
 
   let day = null;
-  let inTrade = false, stop = null, breakLevel = null, tradesToday = 0;
+  let inTrade = false, stop = null, breakLevel = null, tradesToday = 0, entryPrice = null;
   let peakHigh = null;   // highest high since the last entry
   let nextRung = null;   // peakHigh × (1 + STEP_PCT) — next ladder trigger
   let reexitLevel = null; // frozen exit line for an open REENTER (peak at fire time − STEP_PCT)
@@ -116,11 +116,10 @@ function ascendingTriangle(candles) {
     const d = hasDate ? ts.slice(0, 10) : "session";
     const mins = timeToMinutes(t);
 
-    // New day: the date changed. Time-only feeds (backtest CSVs) wrap instead
-    // (15:29 → 09:15) — datetime feeds never use the wrap check.
-    if (d !== day || (!hasDate && mins != null && prevMins != null && mins < prevMins)) {
+    // New session: date changed or time jumped back > 60 min (15:29 → 09:15)
+    if (d !== day || (mins != null && prevMins != null && mins < prevMins - 60)) {
       day = d;
-      inTrade = false; stop = null; breakLevel = null; tradesToday = 0;
+      inTrade = false; stop = null; breakLevel = null; tradesToday = 0; entryPrice = null;
       peakHigh = null; nextRung = null; reexitLevel = null;
     }
     prevMins = mins;
@@ -141,11 +140,22 @@ function ascendingTriangle(candles) {
     const reexit = reexitLevel != null && C[i] < reexitLevel;
 
     if (inTrade) {
+      const hardStop = entryPrice != null ? entryPrice * 0.95 : stop;
+      const softStop = breakLevel != null && C[i] < breakLevel && C[i - 1] < breakLevel;
+
       if (mins != null && mins >= EOD_EXIT_MIN) {
         signal = "SELL";
         reason = "EOD square-off at 15:20";
         inTrade = false;
-      } else if (C[i] <= stop) {
+      } else if (hardStop != null && C[i] <= hardStop) {
+        signal = "SELL";
+        reason = `hard stop hit: close ${C[i].toFixed(2)} <= -5% floor (${hardStop.toFixed(2)})`;
+        inTrade = false;
+      } else if (softStop) {
+        signal = "SELL";
+        reason = `breakout failure: 2 closes below level ${breakLevel.toFixed(2)} (${C[i].toFixed(2)})`;
+        inTrade = false;
+      } else if (stop != null && C[i] <= stop) {
         signal = "SELL";
         reason = `close below pattern stop (${stop.toFixed(2)})`;
         inTrade = false;
@@ -161,22 +171,30 @@ function ascendingTriangle(candles) {
       // If reenter were checked first, one big candle crossing both the
       // old level and a new ceiling would eat the fresh pattern's cross.
       if (mins == null || mins < NO_ENTRY_AFTER) {
-        const tri = findTriangleBreakout(H, L, C, i);
+        const tri1 = i >= 2 ? findTriangleBreakout(H, L, C, i - 1) : null;
+        const tri2 = !tri1 && i >= 3 ? findTriangleBreakout(H, L, C, i - 2) : null;
+        let tri = null;
+        if (tri1) {
+          const req = tri1.resistance + Math.max(5, tri1.resistance * 0.03);
+          if (C[i] > tri1.resistance && (C[i - 1] >= req || C[i] >= req)) tri = tri1;
+        } else if (tri2) {
+          const req = tri2.resistance + Math.max(5, tri2.resistance * 0.03);
+          if (C[i - 1] > tri2.resistance && C[i] > tri2.resistance && C[i] >= req) tri = tri2;
+        }
+
         if (tri) {
           lastLevel = tri.resistance;
           const sameLevel = breakLevel != null
             && Math.abs(tri.resistance - breakLevel) / breakLevel < 0.01;
-          if (sameLevel) {
-            // Same structure re-detected at the old level — not a new
-            // trade, and resurrection is disabled, so emit nothing.
-          } else {
+          if (!sameLevel) {
             signal = "BUY";
-            reason = `Ascending triangle breakout above ${tri.resistance.toFixed(2)} (${tri.len} bars, stop ${tri.support.toFixed(2)})`;
+            reason = `Ascending triangle breakout above ${tri.resistance.toFixed(2)} (${tri.len} bars, confirmed push)`;
             inTrade = true;
+            entryPrice = C[i];
             stop = tri.support;
             breakLevel = tri.resistance;
-            peakHigh = H[i];
-            nextRung = H[i] * (1 + STEP_PCT);
+            peakHigh = Math.max(H[i], H[i - 1]);
+            nextRung = peakHigh * (1 + STEP_PCT);
             tradesToday++;
           }
         }

@@ -102,7 +102,7 @@ function doubleBottom(candles) {
   const green = utBotSeries(H, L, C, 2, 10);
 
   let day = null;
-  let inTrade = false, stop = null, breakLevel = null, tradesToday = 0;
+  let inTrade = false, stop = null, breakLevel = null, tradesToday = 0, entryPrice = null;
   let peakHigh = null;
   let nextRung = null;
   let reexitLevel = null;
@@ -119,7 +119,7 @@ function doubleBottom(candles) {
 
     if (d !== day || (mins != null && prevMins != null && mins < prevMins - 60)) {
       day = d;
-      inTrade = false; stop = null; breakLevel = null; tradesToday = 0;
+      inTrade = false; stop = null; breakLevel = null; tradesToday = 0; entryPrice = null;
       peakHigh = null; nextRung = null; reexitLevel = null;
     }
     prevMins = mins;
@@ -137,11 +137,22 @@ function doubleBottom(candles) {
     const reexit = reexitLevel != null && C[i] < reexitLevel;
 
     if (inTrade) {
+      const hardStop = entryPrice != null ? entryPrice * 0.95 : stop;
+      const softStop = breakLevel != null && C[i] < breakLevel && C[i - 1] < breakLevel;
+
       if (mins != null && mins >= EOD_EXIT_MIN) {
         signal = "SELL";
         reason = "EOD square-off at 15:20";
         inTrade = false;
-      } else if (C[i] <= stop) {
+      } else if (hardStop != null && C[i] <= hardStop) {
+        signal = "SELL";
+        reason = `hard stop hit: close ${C[i].toFixed(2)} <= -5% floor (${hardStop.toFixed(2)})`;
+        inTrade = false;
+      } else if (softStop) {
+        signal = "SELL";
+        reason = `breakout failure: 2 closes below level ${breakLevel.toFixed(2)} (${C[i].toFixed(2)})`;
+        inTrade = false;
+      } else if (stop != null && C[i] <= stop) {
         signal = "SELL";
         reason = `close below pattern stop (${stop.toFixed(2)})`;
         inTrade = false;
@@ -154,19 +165,30 @@ function doubleBottom(candles) {
       }
     } else {
       if (mins == null || mins < NO_ENTRY_AFTER) {
-        const db = findDoubleBottomBreakout(H, L, C, i);
+        const db1 = i >= 2 ? findDoubleBottomBreakout(H, L, C, i - 1) : null;
+        const db2 = !db1 && i >= 3 ? findDoubleBottomBreakout(H, L, C, i - 2) : null;
+        let db = null;
+        if (db1) {
+          const req = db1.neckline + Math.max(5, db1.neckline * 0.03);
+          if (C[i] > db1.neckline && (C[i - 1] >= req || C[i] >= req)) db = db1;
+        } else if (db2) {
+          const req = db2.neckline + Math.max(5, db2.neckline * 0.03);
+          if (C[i - 1] > db2.neckline && C[i] > db2.neckline && C[i] >= req) db = db2;
+        }
+
         if (db) {
           lastLevel = db.neckline;
           const sameLevel = breakLevel != null
             && Math.abs(db.neckline - breakLevel) / breakLevel < 0.01;
           if (!sameLevel) {
             signal = "BUY";
-            reason = `Double bottom (W) breakout above neckline ${db.neckline.toFixed(2)} (${db.len} bars, stop ${db.support.toFixed(2)})`;
+            reason = `Double bottom (W) breakout above neckline ${db.neckline.toFixed(2)} (${db.len} bars, confirmed push)`;
             inTrade = true;
+            entryPrice = C[i];
             stop = db.support;
             breakLevel = db.neckline;
-            peakHigh = H[i];
-            nextRung = H[i] * (1 + STEP_PCT);
+            peakHigh = Math.max(H[i], H[i - 1]);
+            nextRung = peakHigh * (1 + STEP_PCT);
             tradesToday++;
           }
         }

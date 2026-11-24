@@ -302,20 +302,24 @@ function claudSurStrategy(candles) {
   // ── Pattern state (PatternBreakout's model — replay the whole array) ──
   let day = null;
   let orbHigh = null, orbLow = null, orbSealed = false, orbTraded = false;
-  let inTrade = false, stop = null, tradesToday = 0;
+  let inTrade = false, stop = null, breakLevel = null, tradesToday = 0, entryPrice = null;
   let lastRim = null;
   let signal = "WAIT", reason = "No pattern";
 
+  let prevMins = null;
   for (let i = 1; i < N; i++) {
     const t = candles[i].time;
-    const d = t != null ? String(t).slice(0, 10) : null;
+    const ts = t != null ? String(t) : "";
+    const hasDate = /\d{4}-\d{2}-\d{2}/.test(ts);
+    const d = hasDate ? ts.slice(0, 10) : "session";
     const mins = timeToMinutes(t);
 
-    if (d !== day) {
+    if (d !== day || (mins != null && prevMins != null && mins < prevMins - 60)) {
       day = d;
       orbHigh = orbLow = null; orbSealed = false; orbTraded = false;
-      inTrade = false; stop = null; tradesToday = 0;
+      inTrade = false; stop = null; breakLevel = null; tradesToday = 0; entryPrice = null;
     }
+    prevMins = mins;
 
     // ── Build the opening range (normal candles) ──
     if (!orbSealed && mins != null) {
@@ -361,11 +365,22 @@ function claudSurStrategy(candles) {
     }
 
     if (inTrade) {
+      const hardStop = entryPrice != null ? entryPrice * 0.95 : stop;
+      const softStop = breakLevel != null && nC[i] < breakLevel && nC[i - 1] < breakLevel;
+
       if (mins != null && mins >= EOD_EXIT_MIN) {
         signal = "SELL";
         reason = "EOD square-off at 15:20";
         inTrade = false;
-      } else if (nC[i] <= stop) {
+      } else if (hardStop != null && nC[i] <= hardStop) {
+        signal = "SELL";
+        reason = `hard stop hit: close ${nC[i].toFixed(2)} <= -5% floor (${hardStop.toFixed(2)})`;
+        inTrade = false;
+      } else if (softStop) {
+        signal = "SELL";
+        reason = `breakout failure: 2 closes below level ${breakLevel.toFixed(2)} (${nC[i].toFixed(2)})`;
+        inTrade = false;
+      } else if (stop != null && nC[i] <= stop) {
         signal = "SELL";
         reason = `close below pattern stop (${stop.toFixed(2)})`;
         inTrade = false;
@@ -375,25 +390,43 @@ function claudSurStrategy(candles) {
       }
     } else {
       // Fresh patterns FIRST — a new breakout outranks a re-entry signal.
-      if (tradesToday < MAX_TRADES_PER_DAY
-          && (mins == null || mins < NO_ENTRY_AFTER)) {
+      if (mins == null || mins < NO_ENTRY_AFTER) {
+        const orbPush = orbHigh != null ? Math.max(5, orbHigh * 0.03) : 0;
+        const orbReq = orbHigh != null ? orbHigh + orbPush : Infinity;
+        const orb1 = i >= 2 && nC[i - 1] > orbHigh && nC[i - 2] <= orbHigh && nC[i] > orbHigh && (nC[i - 1] >= orbReq || nC[i] >= orbReq);
+        const orb2 = !orb1 && i >= 3 && nC[i - 2] > orbHigh && nC[i - 3] <= orbHigh && nC[i - 1] > orbHigh && nC[i] >= orbReq;
+
         if (!orbTraded && orbHigh != null && mins != null
             && mins >= ORB_END_MIN && mins <= ORB_ENTRY_CUTOFF
-            && nC[i] > orbHigh && nC[i - 1] <= orbHigh) {
+            && (orb1 || orb2)) {
           signal = "BUY";
-          reason = `ORB breakout: close above 9:15-9:30 range high ${orbHigh.toFixed(2)}`;
+          reason = `ORB breakout: close above 9:15-9:30 range high ${orbHigh.toFixed(2)} (confirmed push)`;
           inTrade = true;
+          entryPrice = nC[i];
           stop = orbLow;
+          breakLevel = orbHigh;
           orbTraded = true;
           tradesToday++;
         } else {
-          const cup = findCupBreakout(nH, nL, nC, i);
+          const cup1 = i >= 2 ? findCupBreakout(nH, nL, nC, i - 1) : null;
+          const cup2 = !cup1 && i >= 3 ? findCupBreakout(nH, nL, nC, i - 2) : null;
+          let cup = null;
+          if (cup1) {
+            const req = cup1.rimHigh + Math.max(5, cup1.rimHigh * 0.03);
+            if (nC[i] > cup1.rimHigh && (nC[i - 1] >= req || nC[i] >= req)) cup = cup1;
+          } else if (cup2) {
+            const req = cup2.rimHigh + Math.max(5, cup2.rimHigh * 0.03);
+            if (nC[i - 1] > cup2.rimHigh && nC[i] > cup2.rimHigh && nC[i] >= req) cup = cup2;
+          }
+
           if (cup) {
             lastRim = cup.rimHigh;
             signal = "BUY";
-            reason = `Cup & handle breakout above rim ${cup.rimHigh.toFixed(2)} (cup ${cup.cupLen} bars, handle ${cup.handleLen})`;
+            reason = `Cup & handle breakout above rim ${cup.rimHigh.toFixed(2)} (cup ${cup.cupLen} bars, confirmed push)`;
             inTrade = true;
+            entryPrice = nC[i];
             stop = cup.handleLow;
+            breakLevel = cup.rimHigh;
             tradesToday++;
           }
         }
