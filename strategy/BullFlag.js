@@ -229,4 +229,4 @@ function bullFlag(candles) {
   };
 }
 
-module.exports = { bullFlag };
+module.exports = { bullFlag, findFlagBreakout };

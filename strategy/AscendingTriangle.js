@@ -226,4 +226,4 @@ function ascendingTriangle(candles) {
   };
 }
 
-module.exports = { ascendingTriangle };
+module.exports = { ascendingTriangle, findTriangleBreakout };

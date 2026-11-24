@@ -22,6 +22,7 @@ const { patternBreakout : PATTERN_BREAKOUT } = require("./strategy/PatternBreako
 const { ascendingTriangle : ASCENDING_TRIANGLE_BREAKOUT } = require("./strategy/AscendingTriangle");
 const { bullFlag : BULL_FLAG_BREAKOUT } = require("./strategy/BullFlag");
 const { doubleBottom : DOUBLE_BOTTOM_BREAKOUT } = require("./strategy/DoubleBottom");
+const { multiBreakout : MULTI_BREAKOUT } = require("./strategy/MultiBreakout");
 
 const app = express();
 
@@ -99,10 +100,11 @@ const strategies = {
   ASCENDING_TRIANGLE_BREAKOUT,
   BULL_FLAG_BREAKOUT,
   DOUBLE_BOTTOM_BREAKOUT,
+  MULTI_BREAKOUT,
 };
 
 // Active strategy (default)
-let activeStrategy = "PATTERN_BREAKOUT";
+let activeStrategy = "MULTI_BREAKOUT";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};
