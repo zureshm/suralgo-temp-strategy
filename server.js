@@ -13,6 +13,7 @@ const { sumeshStrategy :SUMESH_STRATEGY } = require("./strategy/SumeshStrategy")
 const { utGptStrategy : HEIKIN_SUMESH_RE } = require("./strategy/UTGPTStrategy");
 const { utGptStrategy1 : HEIKIN_SMARTBUGGY_RE} = require("./strategy/UTGPTStrategy1");
 const { utGptStrategy2 : ULTRA_TERROR_MIX} = require("./strategy/UTGPTStrategy2");
+const { ultraTerrorV2 : ULTRA_TERROR_V2 } = require("./strategy/UltraTerrorV2");
 const { utGptStrategy3 : HEIKIN_SMARTTHOMMAN_RE} = require("./strategy/UTGPTStrategy3");
 const { utGptStrategy4: HEIKIN_DINKAN_RE } = require("./strategy/UTGPTStrategy4");
 const { utGptStrategy4X :HEIKIN_CAREFUL_RE } = require("./strategy/UTGPTStrategy4X");
@@ -91,6 +92,7 @@ const strategies = {
   HEIKIN_CAREFUL_RE,
   HEIKIN_DINKAN_RE,
   ULTRA_TERROR_MIX,
+  ULTRA_TERROR_V2,
   HEIKIN_SMARTBUGGY_RE,
   HEIKIN_DEBUGGED_RE,
   HEIKIN_SMARTTHOMMAN_RE,
@@ -104,7 +106,7 @@ const strategies = {
 };
 
 // Active strategy (default)
-let activeStrategy = "MULTI_BREAKOUT";
+let activeStrategy = "ULTRA_TERROR_V2";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};
