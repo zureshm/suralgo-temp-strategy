@@ -29,10 +29,11 @@
 //          AND WMA30 below 10EMA,
 //          AND candle fully above WMA30 (neither wick nor body touching it).
 // BUY (INFRAEXTRA): same full INFRAGREEN condition set, but without needing
-//          the fresh flip on this exact candle — sampled every 5 candles.
-//          Fires on every sampled candle where the set holds, provided the
-//          firing candle is non-RED on the NORMAL candle (close >= open;
-//          HA can paint green while the real bar closed red).
+//          the fresh UT Bot flip — the combined set itself is the trigger.
+//          Fires ONCE per eligible phase on the exact candle where the set
+//          transitions false→true, provided the firing candle is non-RED on
+//          the NORMAL candle (close >= open; HA can paint green while the
+//          real bar closed red). A red candle breaks eligibility, re-arming.
 //
 // =============================================================================
 

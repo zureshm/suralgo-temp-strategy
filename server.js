@@ -86,16 +86,16 @@ const strategies = {
   SURESH_STRATEGY,
   chatGptStrategy,
   HEIKIN_SUPER_DOUBLE_UT,
+  HEIKIN_DEBUGGED_RE,
   HEIKIN_SUMESH_RE,
-  HEIKIN_TERROR,
-  SUMESH_STRATEGY,
   HEIKIN_CAREFUL_RE,
   HEIKIN_DINKAN_RE,
+  HEIKIN_SMARTBUGGY_RE,
+  HEIKIN_SMARTTHOMMAN_RE,
+  SUMESH_STRATEGY,
+  HEIKIN_TERROR,
   ULTRA_TERROR_MIX,
   ULTRA_TERROR_V2,
-  HEIKIN_SMARTBUGGY_RE,
-  HEIKIN_DEBUGGED_RE,
-  HEIKIN_SMARTTHOMMAN_RE,
   AVIYAL_BREAKOUT_RE,
   SMART_BREAKOUT,
   PATTERN_BREAKOUT,
@@ -106,7 +106,7 @@ const strategies = {
 };
 
 // Active strategy (default)
-let activeStrategy = "ULTRA_TERROR_V2";
+let activeStrategy = "HEIKIN_TERROR";
 
 // Store candles separately for each symbol
 const candleHistoryBySymbol = {};
